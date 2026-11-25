@@ -1,6 +1,6 @@
 # PagerDuty SRE Agent — Session 1 prototype
 
-A small, runnable Python sketch of the SRE Agent's core loop. It uses **LangGraph** for explicit orchestration, Pydantic for typed contracts, mocked MCP-shaped read tools, and SQLite for inspectable incident snapshots and event history.
+A small, runnable Python sketch of the SRE Agent core loop. It uses **LangGraph** for explicit orchestration, Pydantic for typed contracts, mocked MCP-shaped read tools, a deterministic mock model, and SQLite for inspectable incident snapshots and event history.
 
 ## Overview
 
@@ -8,83 +8,86 @@ The demo follows one incident from intake to a human decision boundary:
 
 ```mermaid
 flowchart TD
-    A["demo.py — incident arrives"] --> B["Validate incident and trusted tenant"]
-    B --> C["Load / initialise incident state"]
+    A["demo.py — synthetic checkout SEV-1 arrives"] --> B["Validate incident and trusted tenant"]
+    B --> C["Initialise workflow state"]
     C --> D["Gather context through mocked MCP read tools"]
-
-    subgraph Tools["Read-only tool boundary"]
-        T1["Service profile"]
-        T2["Service metrics"]
-        T3["Recent deployments"]
-        T4["Similar incident history"]
+    subgraph Tools["Read-only mock tool boundary"]
+        T1["Service ownership and runbook"]
+        T2["Checkout success, 5xx and latency"]
+        T3["Payment provider / database / inventory health"]
+        T4["Recent checkout deployments"]
+        T5["Similar incident history"]
     end
-
     D --> Tools
-    Tools --> E["Normalize and collect evidence"]
-    E --> F["Reason — deterministic mock or optional Gemini"]
-    F --> G["Validate structured assessment and evidence references"]
-    G --> H["Prepare recommendation and proposed action"]
+    Tools --> E["Normalize evidence with provenance and freshness"]
+    E --> F["Deterministic mock model assessment"]
+    F --> G["Validate schema and evidence references"]
+    G --> H["Prepare recommendation and proposed rollback"]
     H --> I["Persist snapshot and event in SQLite"]
     I --> J["AWAITING_HUMAN_DECISION"]
-    J --> K["Display recommendation — no write is executed"]
+    J --> K["Human responder decides — no write is executed"]
 ```
 
-The graph is deliberately bounded: it investigates and proposes; it does not autonomously change customer infrastructure.
+The graph investigates and proposes; it does not autonomously change customer infrastructure.
+
+## Case study: SEV-1 checkout reliability incident
+
+**Scenario is synthetic and is not a claim about an actual production outage.** It is inspired by the engineering context of building an AI-enabled e-commerce platform at a stealth AI startup. The exercise focuses on a business-critical checkout path without disclosing company or product identifiers.
+
+At 03:00, an on-call engineer receives a SEV-1 page. Customers are experiencing a sharp decline in successful purchases. Checkout requests are returning more server errors and taking longer to complete. The payment-provider dependency is timing out more frequently. A recent checkout deployment changed the payment-provider client's timeout and retry policy, making it a plausible contributor—but temporal correlation is not proof of root cause.
+
+The demo creates synthetic incident `INC-2026-0042` for tenant `acme-prod` and service `checkout-api`.
+
+### Mock evidence returned by the tools
+
+| Evidence source | Synthetic observation |
+|---|---|
+| Service profile | Tier-1 checkout service, owned by Commerce Platform; dependencies include payment provider, orders database and inventory API |
+| Checkout metrics | Success rate fell from 98.7% to 61.2%; HTTP 5xx rate rose from 0.8% to 14.6%; p95 latency rose from 420 ms to 3,200 ms; 18,420 requests in the sample window |
+| Dependency health | Payment-provider timeout rate rose from 0.4% to 8.9% and p95 latency is 2,400 ms; orders database and inventory API are reported healthy |
+| Recent deployments | `checkout-v2.8.1` was deployed 11 minutes earlier and changed payment-provider timeout/retry behaviour |
+| Incident history | Synthetic prior incident `INC-2025-0187` reports a similar pattern after a retry-policy change; its recorded outcome was a configuration rollback |
+
+All figures, identifiers, service names, deployment details and historical records above are fabricated for this exercise. They are not measurements or records from the user's current platform.
+
+### Agent assessment and handoff
+
+The deterministic mock model identifies the timeout/retry-policy change and degraded payment-provider responses as hypotheses. It preserves the distinction between correlation and confirmed cause, calls out missing checks (independent provider status, deployment-cohort comparison and possible provider rate limiting), and recommends involving the service owner.
+
+It proposes `rollback_deployment(version="checkout-v2.8.1")` as a candidate mitigation. This is a **proposal only**: the graph has no write executor, does not roll back a deployment, and does not claim recovery. A human must validate blast radius and compatibility, explicitly authorize any change through a separate operational path, and verify recovery using fresh checkout-success and payment-latency signals.
 
 ## Selected design areas
 
-The exercise asks us to choose one or two of the six Session 1 areas and demonstrate them in code. This submission deliberately focuses on **State** and **Actions and safety**.
+The exercise asks us to choose one or two of the six Session 1 areas and demonstrate them in code. This submission focuses on **State** and **Actions and safety**.
 
-| Session 1 area | Selection | How this prototype handles it |
+| Session 1 area | Selection | Implementation / boundary |
 |---|---|---|
-| **State** | **Selected — demonstrated in code** | A typed LangGraph state carries the incident through explicit workflow nodes. SQLite stores an incident snapshot and append-only event history. The local graph also uses LangGraph's in-process checkpoint saver. |
-| **Memory** | Out of scope | No curated long-term or cross-incident memory is implemented. Similar incident history is returned by a mocked read tool for this scenario; it is not a memory-learning system. |
-| **Multiplayer** | Out of scope | The exercise assumption is one responder on one surface. Concurrent human/agent updates and conflict resolution are not implemented. |
-| **Actions and safety** | **Selected — demonstrated in code** | The agent can propose a typed action, but the workflow stops at `AWAITING_HUMAN_DECISION`. There is no write-action executor, so the model cannot perform a rollback. |
-| **Scale** | Out of scope | No distributed workers, durable queue, multi-region failover, load testing or production concurrency controls are implemented. |
-| **Extensibility** | Partial, not a selected area | Tool functions are separated behind a small interface-like boundary, but there is no real MCP transport, connector registry or dynamic capability discovery. |
+| **State** | **Selected — demonstrated in code** | Typed LangGraph state carries the incident through explicit workflow nodes. SQLite stores a snapshot and append-only event history; the local graph uses an in-process checkpoint saver. |
+| **Memory** | Out of scope | No curated long-term or cross-incident memory. Similar incident history is synthetic data returned by a mock tool. |
+| **Multiplayer** | Out of scope | One responder / one surface; concurrent human-agent updates and conflict resolution are not implemented. |
+| **Actions and safety** | **Selected — demonstrated in code** | The agent emits a typed proposed action and stops at `AWAITING_HUMAN_DECISION`. No write-action executor or approval UI exists. |
+| **Scale** | Out of scope | No distributed workers, durable queue, multi-region failover, load testing or production concurrency controls. |
+| **Extensibility** | Partial, not selected | Read tools have a small typed interface, but there is no real MCP transport, connector registry or dynamic capability discovery. |
 
-Multi-tenant isolation is an additional baseline constraint from the exercise, not one of the six selected areas. The trusted caller supplies tenant context, and the implementation checks it before tool access.
+Multi-tenant isolation is an additional baseline constraint, not one of the six selected areas. Trusted tenant context is supplied by the caller and checked before tool access.
 
-## What it demonstrates
+## Mock everything external
 
-1. Validate incident identity and trusted tenant context.
-2. Gather service ownership/runbook context, focused metrics, recent deployments, and verified incident history through four mocked read tools.
-3. Preserve evidence provenance, timestamps, freshness and retrieval status.
-4. Produce a structured assessment with hypotheses, supporting evidence, missing information, recommendation and a proposed next action.
-5. Validate that the model only refers to evidence actually retrieved.
-6. Persist the outcome and stop at a human decision boundary. **No write action is executed.**
+The assignment explicitly permits mocking external dependencies. **The default demo is fully offline and deterministic.** No external credentials, network calls, third-party services or live model are used.
 
-## Case study: SEV-1 payment API incident
-
-The runnable demo creates a synthetic incident, `INC-2026-0042`, for tenant `acme-prod` and service `payments-api`. It reports elevated HTTP 503 responses and p95 latency following deployment `v1.4.2`, which occurred approximately eight minutes before the incident.
-
-The mocked investigation returns the following evidence:
-
-| Evidence source | Mock observation |
+| Boundary | Mock used |
 |---|---|
-| Service profile | Tier-1 payment service and its operational context |
-| Service metrics | HTTP 503 error rate increased from 1% baseline to 18%; p95 latency increased from 240 ms to 1,900 ms |
-| Recent deployments | `v1.4.2` changed the payment gateway connection pool |
-| Incident history | A similar historical incident was previously resolved by a rollback |
+| Incident source / PagerDuty trigger | Synthetic Pydantic `Incident` created in `demo.py` |
+| Service ownership and runbook | Local `get_service_profile` mock |
+| Checkout observability | Local `get_checkout_metrics` mock with synthetic success, 5xx, latency and sample-count data |
+| Dependency health | Local `get_dependency_health` mock for payment provider, orders DB and inventory API |
+| Deployment platform | Local `get_recent_deployments` mock |
+| Incident history | Local `search_incident_history` mock with synthetic historical record |
+| MCP integration | Typed local Python functions shaped like read-tool calls; **no MCP server, client, protocol transport or network integration** |
+| Model call | Deterministic `_mock_assessment` function returning a Pydantic `Assessment`; **no LLM API call or model credentials** |
+| Persistence | Local SQLite database |
 
-The agent treats the deployment as a plausible hypothesis, not proven root cause. It identifies missing checks, recommends human review, and proposes `rollback_deployment(v1.4.2)` as a candidate next action. The result is persisted and the graph stops at `AWAITING_HUMAN_DECISION`.
-
-**This is an investigation-and-recommendation case study, not an automated remediation demo.** No deployment is rolled back, no write API is called, and no post-action recovery is claimed.
-
-## Mock boundaries
-
-The exercise explicitly permits external dependencies to be mocked. The default path is self-contained:
-
-| External dependency / boundary | What this submission uses |
-|---|---|
-| Incident source | A synthetic Pydantic `Incident` object created in `demo.py` |
-| Service / observability APIs | Local Python mock read-tool functions returning deterministic service profile, metrics and deployment data |
-| MCP integrations | MCP-shaped local tool functions; **no MCP server, client, network transport or third-party API call** is implemented |
-| Incident history | Synthetic historical incident data returned by a local mock tool |
-| Model call | Deterministic mock reasoning by default; optional Gemini structured-output adapter when explicitly enabled |
-
-The default demo runs locally without external credentials, network calls or infrastructure. The optional Gemini adapter is the only live external integration, and it is not required to run the demo or tests. Regardless of model choice, the workflow's validation and human-decision boundary remain in place.
+The five mock tools are read-only. Their responses include evidence identifiers, tenant scope, source, observation time, freshness and status. A tool failure is represented as an explicit error rather than invented evidence.
 
 ## Run locally
 
@@ -98,46 +101,32 @@ python demo.py --reset
 python -m unittest discover -s tests -v
 ```
 
-No API key or external service is needed for the default run. The deterministic mock model is the default.
+No API key or external service is needed.
 
-### Optional Gemini model
+## Main libraries
 
-To use a live Gemini model for structured assessment:
-
-```bash
-export GOOGLE_API_KEY="..."
-export USE_LIVE_MODEL=1
-export GEMINI_MODEL="gemini-2.5-flash"
-python demo.py --reset
-```
-
-The live model is still not allowed to execute tools or authorize writes. Its output must pass Pydantic validation and evidence-reference validation.
-
-## Main libraries and imports
-
-- `langgraph`: `StateGraph`, `START`, `END`, `MemorySaver` for explicit graph orchestration and checkpointing within the process.
-- `pydantic`: typed incident, evidence and assessment contracts.
+- `langgraph`: `StateGraph`, `START`, `END`, `MemorySaver` for graph orchestration and in-process checkpointing.
+- `pydantic`: typed incident, evidence, proposed-action and assessment contracts.
 - `sqlite3`: local durable snapshot and append-only event history.
-- `langchain-google-genai` (optional): Gemini structured-output adapter.
 
 ## Assumptions from the exercise
 
 - One responder, one surface, one agent.
-- Third-party data is accessed only through MCP tool calls (represented here by local MCP-shaped mock functions).
-- Read-only tools are available. A small allowlisted write capability is represented as a proposed action, but execution is deliberately outside this core-loop demo.
+- Third-party context is obtained through MCP tool calls; this prototype represents those calls with local mocks.
+- Read-only tools are available. A small allowlisted write capability is represented as a proposed action, but execution is outside this core-loop demo.
 - No autonomous actions.
 - Multi-tenant SaaS: tenant context is injected by the trusted caller and checked before tool access.
 
 ## What is intentionally not implemented
 
-Real MCP transport/server, Slack/Teams/PagerDuty UI, real observability integrations, approval UI, write-action executor, multi-responder concurrency, distributed workers, multi-region failover, load testing, production secrets management and full post-action SLI verification. SQLite and in-memory LangGraph checkpointing are suitable for a local demonstration, not a multi-host production deployment.
+Real PagerDuty event ingestion, real MCP transport/server, Slack/Teams/PagerDuty UI, real observability or payment-provider integrations, approval UI, write-action executor, multi-responder concurrency, distributed workers, multi-region failover, load testing, production secrets management and full post-action SLI verification. SQLite and in-memory LangGraph checkpointing are suitable for a local demonstration, not a multi-host production deployment.
 
 ## Where it breaks first
 
-For a burst of correlated incidents, downstream observability/MCP rate limits and model-provider RPM/TPM quotas are likely bottlenecks; retries can amplify load. Production would require durable queue ingestion, tenant-fair priority scheduling, per-dependency concurrency limits, backpressure, deadlines, bounded retries with jitter, circuit breakers and explicit degraded responses.
+For a burst of correlated incidents, downstream observability/MCP rate limits and model-provider quotas would be likely bottlenecks in a live deployment; retries can amplify load. Production would require durable queue ingestion, tenant-fair priority scheduling, per-dependency concurrency limits, backpressure, deadlines, bounded retries with jitter, circuit breakers and explicit degraded responses. The current demo does not model or benchmark that load.
 
 The assignment gives no numeric region-outage traffic profile. Any capacity multiplier must be labelled as a hypothetical assumption and validated with load tests.
 
 ## Design boundary
 
-LangGraph owns orchestration and workflow state, not authorization. Tenant scope, tool allowlists, approval and idempotency must be enforced in deterministic code and, for real writes, again by the destination system. A checkpoint does not make an external side effect exactly-once. The current implementation avoids that problem by not executing external writes.
+LangGraph owns orchestration and workflow state, not authorization. Tenant scope, tool allowlists, approval and idempotency must be enforced in deterministic code and, for real writes, again by the destination system. A checkpoint does not make an external side effect exactly-once. This implementation avoids that problem by not executing external writes.
