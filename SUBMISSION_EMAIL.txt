@@ -1,0 +1,14 @@
+Hi Kyle,
+
+Thanks for confirming the format.
+
+Please find the Session 1 submission below:
+- GitHub repository: https://github.com/rudolfo-felix/pager-duty
+- ZIP archive: pagerduty_sre_agent_takehome.zip (attached)
+
+The project contains a small runnable Python sketch of the SRE Agent core loop, deterministic tests, and a README documenting assumptions, trade-offs, and limitations. External model and MCP integrations are mocked so the project can be run locally without API keys.
+
+I understand that no separate formal preparation is required for Session 2. I look forward to discussing the production design with the team.
+
+Best,
+Rudolfo
