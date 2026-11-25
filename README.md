@@ -1,33 +1,74 @@
-# PagerDuty SRE Agent — design exercise
+# PagerDuty SRE Agent — Session 1 prototype
 
-A minimal runnable Python sketch for Session 1 ("In the box"). The repository contains a deterministic incident investigation loop, mocked MCP-shaped read tools, SQLite-backed incident state, an approval-bound policy broker, and tests.
+A small, runnable Python sketch of the SRE Agent's core loop. It uses **LangGraph** for explicit orchestration, Pydantic for typed contracts, mocked MCP-shaped read tools, and SQLite for inspectable incident snapshots and event history.
 
-## Run
+## What it demonstrates
+
+1. Validate incident identity and trusted tenant context.
+2. Gather service ownership/runbook context, focused metrics, recent deployments, and verified incident history through four mocked read tools.
+3. Preserve evidence provenance, timestamps, freshness and retrieval status.
+4. Produce a structured assessment with hypotheses, supporting evidence, missing information, recommendation and a proposed next action.
+5. Validate that the model only refers to evidence actually retrieved.
+6. Persist the outcome and stop at a human decision boundary. **No write action is executed.**
+
+## Run locally
+
+Python 3.11+ is recommended.
 
 ```bash
-python3 demo.py --reset
-python3 demo.py --approve --reset
-python3 -m unittest discover -s tests -v
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python demo.py --reset
+python -m unittest discover -s tests -v
 ```
 
-No external packages, API keys, or real PagerDuty services are required. The approval path is a local simulation; it does not perform a real deployment rollback.
+No API key or external service is needed. The deterministic mock model is the default.
 
-## Design focus
+### Optional Gemini model
 
-1. **Safety and tenant boundary:** tenant identity is supplied by trusted server context. The mocked tool boundary rejects model-supplied tenant overrides. Writes are allowlisted and require a signed approval bound to tenant, incident, action arguments, revision, and expiry.
-2. **State and idempotency:** SQLite WAL persists incident snapshots and append-only events. The mocked action and idempotency record are committed together.
+To use a live Gemini model for structured assessment:
 
-## Explicit assumptions
+```bash
+export GOOGLE_API_KEY="..."
+export USE_LIVE_MODEL=1
+export GEMINI_MODEL="gemini-2.5-flash"
+python demo.py --reset
+```
 
-The assignment references a region-outage burst but the supplied PDF does not define a numeric traffic profile. Any volume or multiplier discussed in the interview should be stated as a hypothetical assumption, not as a PagerDuty requirement.
+The live model is still not allowed to execute tools or authorize writes. Its output must pass Pydantic validation and evidence-reference validation.
 
-## Left out and why
+## Main libraries and imports
 
-Real MCP transport, real LLM integration, authentication/approval UI, multi-responder coordination, distributed worker leases, multi-region state, model evaluations, production observability, and post-action SLI verification are intentionally omitted to keep this exercise executable without credentials or external services.
+- `langgraph`: `StateGraph`, `START`, `END`, `MemorySaver` for explicit graph orchestration and checkpointing within the process.
+- `pydantic`: typed incident, evidence and assessment contracts.
+- `sqlite3`: local durable snapshot and append-only event history.
+- `langchain-google-genai` (optional): Gemini structured-output adapter.
+
+## Mock incident
+
+`INC-2026-0042` — SEV-1 on `payments-api`, elevated 503s and p95 latency after deployment `v1.4.2`. Mock evidence includes a tier-1 service profile, service metrics, recent deployment and a verified similar incident.
+
+The mock assessment identifies the deployment as a plausible cause, lists missing checks, recommends human review, and proposes `rollback_deployment(v1.4.2)` as a candidate action. This is a proposal only.
+
+## Assumptions from the exercise
+
+- One responder, one surface, one agent.
+- Third-party data is accessed only through MCP tool calls (represented here by local MCP-shaped mock functions).
+- Read-only tools are available. A small allowlisted write capability is represented as a proposed action, but execution is deliberately outside this core-loop demo.
+- No autonomous actions.
+- Multi-tenant SaaS: tenant context is injected by the trusted caller and checked before tool access.
+
+## What is intentionally not implemented
+
+Real MCP transport/server, Slack/Teams/PagerDuty UI, real observability integrations, approval UI, write-action executor, multi-responder concurrency, distributed workers, multi-region failover, load testing, production secrets management and full post-action SLI verification. SQLite and in-memory LangGraph checkpointing are suitable for a local demonstration, not a multi-host production deployment.
 
 ## Where it breaks first
 
-At burst scale, provider RPM/TPM quotas and downstream tool connection pools are likely bottlenecks before the local orchestration loop. Retry storms amplify load. Production needs alert correlation, tenant-fair queues, bounded retries with jitter, backpressure, per-dependency bulkheads, circuit breakers, and severity-aware load shedding.
+For a burst of correlated incidents, downstream observability/MCP rate limits and model-provider RPM/TPM quotas are likely bottlenecks; retries can amplify load. Production would require durable queue ingestion, tenant-fair priority scheduling, per-dependency concurrency limits, backpressure, deadlines, bounded retries with jitter, circuit breakers and explicit degraded responses.
 
-SQLite is local demonstration persistence, not a multi-host database. Local idempotency does not solve ambiguous external effects if a remote system applies an action but its response is lost; production needs downstream idempotency and reconciliation. Concurrent humans/workers require one authoritative incident timeline, revision-based approval invalidation, and destination-enforced fencing where available.
+The assignment gives no numeric region-outage traffic profile. Any capacity multiplier must be labelled as a hypothetical assumption and validated with load tests.
 
+## Design boundary
+
+LangGraph owns orchestration and workflow state, not authorization. Tenant scope, tool allowlists, approval and idempotency must be enforced in deterministic code and, for real writes, again by the destination system. A checkpoint does not make an external side effect exactly-once. The current implementation avoids that problem by not executing external writes.
