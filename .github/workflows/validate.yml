@@ -1,9 +1,9 @@
 name: validate-takehome
 on:
   push:
-    branches: [main]
+    branches: [take-home-complete]
   pull_request:
-    branches: [main]
+    branches: [take-home-complete]
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -12,7 +12,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run deterministic tests
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests
         run: python -m unittest discover -s tests -v
-      - name: Validate demo
+      - name: Run demo
         run: python demo.py --reset
