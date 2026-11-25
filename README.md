@@ -43,11 +43,11 @@ This is a hypothesis, not a confirmed root cause. For this take-home, the propos
 
 ## 3. How the agent works
 
-The end-to-end lifecycle includes the implemented investigation and the optional mock write path. Both are exercised by the tests; real integrations and a production approval service remain out of scope.
+The end-to-end lifecycle below separates the **implemented agent path** from the **external human-decision boundary**. The prototype validates a caller-supplied approval grant; it does not implement the responder UI, approval service or notification/resume workflow.
 
 ```mermaid
 flowchart TD
-    A(["Incident triggers"]) --> B["Validate incident + trusted tenant"]
+    A(["Incident triggers"]) --> B["Validate incident + tenant scope"]
     B --> C["Initialise workflow state"]
 
     subgraph G["1 · Gather context — five mocked read tools"]
@@ -64,22 +64,38 @@ flowchart TD
     C --> T1
     E --> F["2 · Assess likely causes + next steps"]
     F --> V["3 · Validate assessment + evidence"]
-    V --> H["4 · Recommend action"]
-    H --> Z{"Matching trusted approval grant?"}
+    V --> H["4 · Produce recommendation + exact proposed action"]
 
-    Z -- "No / missing" --> M(["AWAITING HUMAN DECISION"])
-    Z -- "Mismatched / rejected" --> R(["AUTHORIZATION REJECTED"])
-    Z -- "Yes" --> J["Mock rollback executor"]
-    J --> N["Verify with fresh mock metrics"]
+    subgraph HUMAN["External human decision — not implemented"]
+      direction TB
+      U["Responder reviews evidence, impact and proposed action"]
+      D{"Decision"}
+      U --> D
+      D -- "Approve exact proposal" --> G1["Caller supplies ActionAuthorization grant"]
+      D -- "Reject / defer / no response" --> G0["No approval grant supplied"]
+    end
+
+    H --> U
+    G1 -. "grant input" .-> Z{"Grant matches tenant, incident,<br/>action, arguments and allowlist?"}
+    G0 -. "no grant" .-> M(["AWAITING HUMAN DECISION<br/>No write; incident remains open"])
+    Z -- "Absent" --> M
+    Z -- "Invalid / mismatched" --> R(["AUTHORIZATION REJECTED<br/>No write executed"])
+    Z -- "Exact match" --> J["Mock rollback executor"]
+    J --> N["Verify using fresh mock metrics"]
     N --> O{"Recovery thresholds met?"}
-    O -- "Yes" --> P(["RECOVERY VERIFIED"])
-    O -- "No" --> Q["RECOVERY NOT CONFIRMED<br/>Reassess and request a new decision"]
+    O -- "Yes" --> P(["RECOVERY VERIFIED<br/>Synthetic metrics only"])
+    O -- "No" --> Q(["RECOVERY NOT CONFIRMED<br/>Keep incident open; no automatic repeat"])
+    Q --> X["Gather updated evidence and request a new human decision"]
 
     classDef implemented stroke-width:2px
-    class A,B,C,T1,T2,T3,T4,T5,E,F,V,H,Z,J,N,O,P,Q,M,R implemented
+    classDef boundary stroke-dasharray:5 5,stroke-width:1px
+    class A,B,C,T1,T2,T3,T4,T5,E,F,V,H,Z,J,N,O,P,Q,M,R,X implemented
+    class U,D,G1,G0 boundary
 ```
 
-**Diagram legend:** all nodes shown are implemented using deterministic local mocks. The rollback executor and post-action metrics are simulations, not real deployment or observability integrations.
+**Decision semantics:** approving means the caller passes a grant for the exact proposed tenant, incident, action and arguments; only a matching grant reaches the mock executor. Rejecting, deferring or not responding means no grant is supplied, so the implemented path stops at `AWAITING_HUMAN_DECISION` with no write. A malformed or mismatched grant stops at `AUTHORIZATION_REJECTED`. The current prototype does not record an explicit human-denial event or resume a paused graph; those belong to the external approval workflow. The `ActionAuthorization` object is caller-supplied and its fields are checked, but this prototype does not authenticate the approver or prove the grant's origin.
+
+**Diagram legend:** solid nodes are implemented with deterministic local mocks; dashed nodes are external and not implemented. The rollback executor and post-action metrics are simulations, not real deployment or observability integrations.
 
 **What the tests cover:**
 
