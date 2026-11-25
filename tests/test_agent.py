@@ -80,6 +80,10 @@ class LangGraphAgentTests(unittest.TestCase):
         self.assertEqual(result["action_result"]["status"], "simulated_execution_succeeded")
         self.assertTrue(result["action_result"]["simulated"])
         self.assertEqual(result["action_result"]["approved_by"], "test-responder")
+        self.assertEqual(
+            result["action_result"]["idempotency_key"],
+            "tenant-a:INC-test-1:rollback_deployment:checkout-v2.8.1",
+        )
         self.assertTrue(result["verification"]["verified"])
         self.assertEqual(
             result["verification"]["evidence_id"],
