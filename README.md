@@ -95,11 +95,11 @@ flowchart TD
     V --> H["4 · Recommend action"]
     H --> Z{"Explicitly authorised<br/>for this action and scope?"}
 
-    Z -- "Yes · policy permits" --> J["Execute approved automation<br/>via authorised tool"]
-    Z -- "No · approval required" --> K["Human responder reviews"]
+    Z -- "Action is permitted" --> K["Human responder reviews + approves"]
+    Z -- "Not permitted" --> M(["Handoff / no action"])
     K --> L{"Human approves?"}
-    L -- "Yes" --> J
-    L -- "No" --> M(["Handoff / no action"])
+    L -- "Yes" --> J["Execute approved automation<br/>via authorised tool"]
+    L -- "No" --> M
 
     J --> N["Verify with fresh operational signals"]
     N --> O{"Did the fix work?"}
