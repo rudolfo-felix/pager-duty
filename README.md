@@ -156,11 +156,10 @@ The demo creates a local SQLite database at `runtime/agent.db`. Use `--reset` to
 | `tests/test_agent.py` | Tests for the core flow, tenant boundary, evidence and persistence |
 | `requirements.txt` | Python dependencies |
 | `.github/workflows/validate.yml` | CI: install, tests and demo |
-| `PRODUCTION_DISCUSSION.md` | Session 2 design notes: evaluation, rollout, monitoring, failure and scale |
 
-**Suggested reading order:** run `demo.py` → inspect `Incident` and `Evidence` in `agent.py` → follow the graph nodes → read `tests/test_agent.py` → review `PRODUCTION_DISCUSSION.md`.
+**Suggested reading order:** run `demo.py` → inspect `Incident` and `Evidence` in `agent.py` → follow the graph nodes → read `tests/test_agent.py` → review the production-readiness checklist below.
 
-## 6. Scope and production considerations
+## 6. Scope and production readiness
 
 ### Deliberately not implemented
 
@@ -178,7 +177,19 @@ A production system would need durable queueing, tenant-fair scheduling, bounded
 
 The likely early bottlenecks during correlated incident bursts are downstream observability/tool limits and model-provider quotas. This prototype does not benchmark burst capacity.
 
-For the broader Session 2 discussion, see [PRODUCTION_DISCUSSION.md](PRODUCTION_DISCUSSION.md).
+### Production readiness checklist
+
+The take-home is intentionally small. The following table captures the main engineering concerns to address before operating this as a production responder.
+
+| Area | Production design | Key safeguards / signals |
+|---|---|---|
+| **Evaluation** | Build versioned incident-trace datasets from resolved incidents and responder-reviewed recommendations. Reconstruct only the evidence available at decision time. | Test ambiguity, missing or contradictory evidence, tool failures and safe abstention. Measure grounding, citation validity, hypothesis usefulness, recommendation utility and policy compliance. Combine automated regression metrics with human review. |
+| **Release process** | Version model, prompts, graph, tool schemas, retrieval rules, safety policy and evaluation data together. | Unit, contract, security and offline regression gates; then shadow, tenant/cohort canary and progressive rollout. Keep a fast rollback path. Prompts are not security boundaries. |
+| **Monitoring & degraded mode** | Monitor each tenant and release across queue age, throughput, worker saturation, stage latency, tool/model errors, retries, cost, evidence freshness, approvals and action outcomes. | Mark results degraded when critical evidence is stale or missing. Return partial evidence and escalate rather than fabricate. A fluent answer is not proof of system health. |
+| **Resilience, cost & latency** | Set independent budgets for wall time, tool calls, model calls, tokens and retries. | Bounded retries with jitter, circuit breakers, dependency bulkheads, tenant-fair queues, backpressure, deadlines and severity-aware load shedding. Evaluate fallback models independently. |
+| **Trust, tenancy & collaboration** | Enforce tenant identity and authorization server-side at every tool boundary. Keep one authoritative incident timeline. | Audit actor, tenant, incident revision, policy decision, approver, tool arguments/results, agent release and evidence references. Invalidate approvals when incident state changes. Use concurrency control and destination-enforced idempotency. |
+| **Agent-caused incident** | Provide an independent control plane to stop action capabilities and recover safely. | Revoke pending approvals, force read-only mode, preserve traces and tool I/O, enable human-led recovery, perform root-cause analysis and add the case to deterministic regression tests before re-enabling actions. |
+| **Regional outage / burst load** | Protect ingestion and downstream dependencies during correlated incident spikes. | Durable queues, priority lanes, tenant quotas, bounded concurrency, backpressure, deadlines, circuit breakers, retry budgets and partial/degraded responses. Likely early bottlenecks are observability/MCP pools and model RPM/TPM quotas. No burst capacity is benchmarked in this prototype. |
 
 ---
 
