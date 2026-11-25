@@ -2,6 +2,50 @@
 
 A small, runnable Python sketch of the SRE Agent's core loop. It uses **LangGraph** for explicit orchestration, Pydantic for typed contracts, mocked MCP-shaped read tools, and SQLite for inspectable incident snapshots and event history.
 
+## Overview
+
+The demo follows one incident from intake to a human decision boundary:
+
+```mermaid
+flowchart TD
+    A["demo.py — incident arrives"] --> B["Validate incident and trusted tenant"]
+    B --> C["Load / initialise incident state"]
+    C --> D["Gather context through mocked MCP read tools"]
+
+    subgraph Tools["Read-only tool boundary"]
+        T1["Service profile"]
+        T2["Service metrics"]
+        T3["Recent deployments"]
+        T4["Similar incident history"]
+    end
+
+    D --> Tools
+    Tools --> E["Normalize and collect evidence"]
+    E --> F["Reason — deterministic mock or optional Gemini"]
+    F --> G["Validate structured assessment and evidence references"]
+    G --> H["Prepare recommendation and proposed action"]
+    H --> I["Persist snapshot and event in SQLite"]
+    I --> J["AWAITING_HUMAN_DECISION"]
+    J --> K["Display recommendation — no write is executed"]
+```
+
+The graph is deliberately bounded: it investigates and proposes; it does not autonomously change customer infrastructure.
+
+## Selected design areas
+
+The exercise asks us to choose one or two of the six Session 1 areas and demonstrate them in code. This submission deliberately focuses on **State** and **Actions and safety**.
+
+| Session 1 area | Selection | How this prototype handles it |
+|---|---|---|
+| **State** | **Selected — demonstrated in code** | A typed LangGraph state carries the incident through explicit workflow nodes. SQLite stores an incident snapshot and append-only event history. The local graph also uses LangGraph's in-process checkpoint saver. |
+| **Memory** | Out of scope | No curated long-term or cross-incident memory is implemented. Similar incident history is returned by a mocked read tool for this scenario; it is not a memory-learning system. |
+| **Multiplayer** | Out of scope | The exercise assumption is one responder on one surface. Concurrent human/agent updates and conflict resolution are not implemented. |
+| **Actions and safety** | **Selected — demonstrated in code** | The agent can propose a typed action, but the workflow stops at `AWAITING_HUMAN_DECISION`. There is no write-action executor, so the model cannot perform a rollback. |
+| **Scale** | Out of scope | No distributed workers, durable queue, multi-region failover, load testing or production concurrency controls are implemented. |
+| **Extensibility** | Partial, not a selected area | Tool functions are separated behind a small interface-like boundary, but there is no real MCP transport, connector registry or dynamic capability discovery. |
+
+Multi-tenant isolation is an additional baseline constraint from the exercise, not one of the six selected areas. The trusted caller supplies tenant context, and the implementation checks it before tool access.
+
 ## What it demonstrates
 
 1. Validate incident identity and trusted tenant context.
