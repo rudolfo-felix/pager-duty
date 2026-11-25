@@ -55,6 +55,37 @@ Multi-tenant isolation is an additional baseline constraint from the exercise, n
 5. Validate that the model only refers to evidence actually retrieved.
 6. Persist the outcome and stop at a human decision boundary. **No write action is executed.**
 
+## Case study: SEV-1 payment API incident
+
+The runnable demo creates a synthetic incident, `INC-2026-0042`, for tenant `acme-prod` and service `payments-api`. It reports elevated HTTP 503 responses and p95 latency following deployment `v1.4.2`, which occurred approximately eight minutes before the incident.
+
+The mocked investigation returns the following evidence:
+
+| Evidence source | Mock observation |
+|---|---|
+| Service profile | Tier-1 payment service and its operational context |
+| Service metrics | HTTP 503 error rate increased from 1% baseline to 18%; p95 latency increased from 240 ms to 1,900 ms |
+| Recent deployments | `v1.4.2` changed the payment gateway connection pool |
+| Incident history | A similar historical incident was previously resolved by a rollback |
+
+The agent treats the deployment as a plausible hypothesis, not proven root cause. It identifies missing checks, recommends human review, and proposes `rollback_deployment(v1.4.2)` as a candidate next action. The result is persisted and the graph stops at `AWAITING_HUMAN_DECISION`.
+
+**This is an investigation-and-recommendation case study, not an automated remediation demo.** No deployment is rolled back, no write API is called, and no post-action recovery is claimed.
+
+## Mock boundaries
+
+The exercise explicitly permits external dependencies to be mocked. The default path is self-contained:
+
+| External dependency / boundary | What this submission uses |
+|---|---|
+| Incident source | A synthetic Pydantic `Incident` object created in `demo.py` |
+| Service / observability APIs | Local Python mock read-tool functions returning deterministic service profile, metrics and deployment data |
+| MCP integrations | MCP-shaped local tool functions; **no MCP server, client, network transport or third-party API call** is implemented |
+| Incident history | Synthetic historical incident data returned by a local mock tool |
+| Model call | Deterministic mock reasoning by default; optional Gemini structured-output adapter when explicitly enabled |
+
+The default demo runs locally without external credentials, network calls or infrastructure. The optional Gemini adapter is the only live external integration, and it is not required to run the demo or tests. Regardless of model choice, the workflow's validation and human-decision boundary remain in place.
+
 ## Run locally
 
 Python 3.11+ is recommended.
@@ -67,7 +98,7 @@ python demo.py --reset
 python -m unittest discover -s tests -v
 ```
 
-No API key or external service is needed. The deterministic mock model is the default.
+No API key or external service is needed for the default run. The deterministic mock model is the default.
 
 ### Optional Gemini model
 
@@ -88,12 +119,6 @@ The live model is still not allowed to execute tools or authorize writes. Its ou
 - `pydantic`: typed incident, evidence and assessment contracts.
 - `sqlite3`: local durable snapshot and append-only event history.
 - `langchain-google-genai` (optional): Gemini structured-output adapter.
-
-## Mock incident
-
-`INC-2026-0042` — SEV-1 on `payments-api`, elevated 503s and p95 latency after deployment `v1.4.2`. Mock evidence includes a tier-1 service profile, service metrics, recent deployment and a verified similar incident.
-
-The mock assessment identifies the deployment as a plausible cause, lists missing checks, recommends human review, and proposes `rollback_deployment(v1.4.2)` as a candidate action. This is a proposal only.
 
 ## Assumptions from the exercise
 
