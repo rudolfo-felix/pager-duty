@@ -1,6 +1,6 @@
 # PagerDuty SRE Agent — Session 1
 
-A small, runnable **incident-response agent prototype** built with LangGraph, Pydantic and SQLite. It investigates a synthetic SEV-1 checkout incident, gathers evidence from mocked read tools, produces a structured assessment and stops before any state-changing action.
+A runnable **incident-response agent prototype** built with LangGraph, Pydantic and SQLite. It investigates a synthetic SEV-1 checkout incident, gathers evidence, produces a structured assessment and recommends a mitigation. With a matching trusted approval grant, it can also run a simulated rollback and verify synthetic post-action metrics.
 
 > **Offline by design:** incident data, tool integrations and model assessment are mocked. No PagerDuty account, API key or external service is required.
 
@@ -20,7 +20,7 @@ PagerDuty's SRE Agent acts as a virtual responder: when an incident triggers, it
 
 The important distinction is that authorisation is not the same as a recommendation. The agent must never grant itself permission. For this exercise, any state-changing action requires explicit human approval, consistent with the brief's assumption of predefined actions that need approval and no autonomous actions. A broader production policy may support tightly scoped pre-authorized automations, but that is outside this prototype. Every executed action must be verified using fresh operational signals.
 
-This take-home implements the investigation and recommendation slice. Its local demo deliberately has no write executor, so it stops before any state-changing action.
+This take-home implements the investigation path and a mock-only authorized action path. No real deployment, PagerDuty, MCP, observability or model-provider API is called.
 
 ## 2. Synthetic incident scenario
 
@@ -37,13 +37,13 @@ At 03:00, checkout success drops while payment-provider timeouts, HTTP 5xx error
 
 **Proposed mitigation:** `rollback_deployment("checkout-v2.8.1")`.
 
-This is a hypothesis, not a confirmed root cause. For this take-home, the proposed rollback would require explicit human approval before execution. Model confidence is never authorization.
+This is a hypothesis, not a confirmed root cause. For this take-home, the proposed rollback runs only when the caller supplies an explicit approval grant matching the tenant, incident, action and arguments. Model confidence is never authorization.
 
 > All incident IDs, metrics, services, deployments and historical records are fabricated for this exercise. The scenario is inspired by the engineering context of building an AI-enabled e-commerce platform at a stealth AI startup; it does not describe an actual outage.
 
 ## 3. How the agent works
 
-The end-to-end lifecycle below includes both possible action paths. The first part—incident validation, context gathering, assessment, validation and recommendation—is implemented in this prototype. Authorization, execution and recovery verification are production design paths and are not implemented here.
+The end-to-end lifecycle includes the implemented investigation and the optional mock write path. Both are exercised by the tests; real integrations and a production approval service remain out of scope.
 
 ```mermaid
 flowchart TD
@@ -65,39 +65,34 @@ flowchart TD
     E --> F["2 · Assess likely causes + next steps"]
     F --> V["3 · Validate assessment + evidence"]
     V --> H["4 · Recommend action"]
-    H --> Z{"Explicitly authorised<br/>for this action and scope?"}
+    H --> Z{"Matching trusted approval grant?"}
 
-    Z -- "Action is permitted" --> K["Human responder reviews + approves"]
-    Z -- "Not permitted" --> M(["Handoff / no action"])
-    K --> L{"Human approves?"}
-    L -- "Yes" --> J["Execute approved automation<br/>via authorised tool"]
-    L -- "No" --> M
-
-    J --> N["Verify with fresh operational signals"]
-    N --> O{"Did the fix work?"}
-    O -- "Yes" --> P["Update incident + record outcome"]
-    O -- "No" --> Q["Reassess evidence + choose next step"]
-    Q --> H
+    Z -- "No / missing" --> M(["AWAITING HUMAN DECISION"])
+    Z -- "Yes" --> J["Mock rollback executor"]
+    J --> N["Verify with fresh mock metrics"]
+    N --> O{"Recovery thresholds met?"}
+    O -- "Yes" --> P(["RECOVERY VERIFIED"])
+    O -- "No" --> Q["RECOVERY NOT CONFIRMED<br/>Reassess and request a new decision"]
 
     classDef implemented stroke-width:2px
-    class A,B,C,T1,T2,T3,T4,T5,E,F,V,H implemented
-    class Z,J,K,L,M,N,O,P,Q production
-    classDef production stroke-dasharray:5 5
+    class A,B,C,T1,T2,T3,T4,T5,E,F,V,H,Z,J,N,O,P,Q,M implemented
 ```
 
-**Diagram legend:** solid nodes are implemented in the prototype; dashed nodes are production design only. The dashed authorization, human-approval, write-execution and recovery paths are **not implemented and are not covered by the current tests**.
+**Diagram legend:** all nodes shown are implemented using deterministic local mocks. The rollback executor and post-action metrics are simulations, not real deployment or observability integrations.
 
-**What the current tests cover:**
+**What the tests cover:**
 
 | Test | Verified behaviour |
 |---|---|
-| Core loop | Runs all five mocked reads, produces an assessment and stops at `AWAITING_HUMAN_DECISION` |
-| Evidence provenance | Evidence includes source, timestamp and the expected tenant |
-| Tenant boundary | Rejects an incident/tenant mismatch before gathering context |
-| Tool isolation | A mock tool rejects a different tenant |
-| Persistence | Saves the incident snapshot and an event record |
+| Core investigation | Runs all five mocked reads, produces an assessment and waits when no approval is supplied |
+| Evidence and tenancy | Checks evidence provenance and rejects tenant mismatches before tool access |
+| Persistence | Saves incident state and an event record |
+| Authorized execution | A matching tenant, incident, action and argument grant allows the mock rollback to run |
+| Authorization rejection | A grant for another tenant or deployment version is rejected; no action executes |
+| Recovery verification | Fresh synthetic metrics determine whether recovery is verified |
+| Failed recovery | Keeps the incident open and requires a new human decision; it does not repeat the write |
 
-**Not tested:** simulated read-tool failures and partial evidence; authorization-policy decisions; human approval or rejection; an authorized write executor; idempotency/retries for writes; post-action metric verification; or the recovery/reassessment loop. The code currently has no write executor or post-action verification node, so those production paths cannot yet be exercised by tests.
+**Still outside this prototype:** real approval UI or policy service, real deployment execution, real post-action observability queries, read-tool failure/degraded-assessment tests, distributed idempotency and production load tests.
 
 **What each read tool provides:**
 - **Service profile:** who owns the service, what it depends on and where its runbook is.
@@ -109,10 +104,9 @@ flowchart TD
 The tools run sequentially in the order shown. Each successful read contributes evidence to the bundle; a failed read is recorded as a tool error, and the remaining reads continue. The prototype uses deterministic mock data for all five.
 
 **How to read the boundary:**
-- **Implemented in this take-home:** incident validation, five sequential mock reads, evidence bundle, deterministic assessment, output validation, recommendation and persistence.
-- **Production flow:** deterministic authorization check, human approval when needed, execution through an authorized tool, and post-action verification.
-- **Approval boundary:** for this exercise, every state-changing action requires explicit human approval; disallowed actions are handed off without execution.
-- **Recovery is a feedback loop:** if fresh signals do not show recovery, the agent reassesses rather than declaring success.
+- **Implemented:** incident investigation, approval-grant validation, simulated rollback, post-action metric verification and failed-recovery handoff.
+- **Not implemented:** real approval UI/policy service, real deployment action or real observability integration.
+- **Safety behaviour:** an absent or mismatched grant cannot execute; unsuccessful recovery does not trigger an automatic repeat.
 
 The agent must not infer authorization from its own assessment. Policy enforcement belongs in deterministic controls and the destination system, not in model-generated text.
 
@@ -128,7 +122,7 @@ The brief separates the discussion into **Session 1: designing the agent** and *
 | **State** | Typed workflow state, SQLite snapshot and append-only event history for a local run. | <strong>Partial</strong> — no distributed recovery or long-running incident lifecycle |
 | **Memory** | Synthetic incident history is queried as one of the context tools. | <strong>Limited</strong> — no curated cross-incident memory or learning |
 | **Multiplayer** | Tenant context is validated before tool access. | <strong>Not implemented</strong> — no concurrent responders, agent coordination or shared-surface synchronization |
-| **Actions and safety** | Typed proposed mitigation, evidence validation and a stop before execution. | <strong>Partial</strong> — approval workflow and action executor are not implemented |
+| **Actions and safety** | Typed proposed mitigation, trusted grant validation, mock rollback executor and mock recovery verification. | <strong>Partial</strong> — no production approval service or real write integration |
 | **Scale** | Identifies likely burst bottlenecks and production controls in the design discussion below. | <strong>Not implemented / not load-tested</strong> |
 | **Extensibility** | Five local read tools illustrate a narrow integration boundary. | <strong>Limited</strong> — no real MCP transport, integration registry or multilingual support |
 
@@ -185,7 +179,7 @@ The demo creates a local SQLite database at `runtime/agent.db`. Use `--reset` to
 | Context | Five deterministic, tenant-scoped, read-only mock tools |
 | Assessment | Deterministic local `_mock_assessment`; no LLM API call |
 | Persistence | SQLite snapshot + append-only incident event history |
-| Safety boundary | Stops at `AWAITING_HUMAN_DECISION`; no write executor |
+| Actions & safety | Requires a matching trusted grant; mock rollback + mock post-action verification only |
 
 ### Mocked read tools
 
@@ -209,11 +203,11 @@ The demo creates a local SQLite database at `runtime/agent.db`. Use `--reset` to
 
 - Real PagerDuty, MCP or observability integrations.
 - A live LLM call or model-provider adapter.
-- Authorization policy engine, approval UI, write executor or post-action verification.
+- Production policy/approval service, real deployment executor or real post-action observability integration.
 - Cross-incident memory or multiplayer collaboration.
 - Distributed workers, multi-region failover or load testing.
 
-MCP is represented by local MCP-shaped functions; there is no MCP client/server or network transport. SQLite and in-process checkpointing make this a local prototype, not a distributed runtime.
+MCP is represented by local MCP-shaped functions; there is no MCP client/server or network transport. The rollback executor and post-action metrics are also local mocks. SQLite and in-process checkpointing make this a local prototype, not a distributed runtime.
 
 ### Production considerations
 
@@ -231,4 +225,4 @@ These are production design considerations, not implemented capabilities. They d
 
 ---
 
-**Design principle:** the agent can recommend and, when explicitly authorized, invoke approved automations. It must never authorize itself. Tenant scope, tool allowlists, approvals and idempotency must be enforced deterministically and again by destination systems. A checkpoint does not make external side effects exactly-once.
+**Design principle:** the agent can recommend an action and invoke the mock executor only when the caller supplies a matching trusted approval grant. It must never authorize itself. Production tenant scope, policy, approvals and idempotency must be enforced again by destination systems. A checkpoint does not make external side effects exactly-once.
