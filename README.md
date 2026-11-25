@@ -6,7 +6,8 @@ A small, runnable **incident-response agent prototype** built with LangGraph, Py
 
 ## Contents
 
-1. [Interview brief coverage](#how-this-submission-maps-to-the-interview-brief)\n2. [Context and objective](#1-context-and-objective)
+1. [Interview brief coverage](#how-this-submission-maps-to-the-interview-brief)
+2. [Context and objective](#1-context-and-objective)
 3. [Synthetic incident scenario](#2-synthetic-incident-scenario)
 4. [How the agent works](#3-how-the-agent-works)
 5. [Run the prototype](#4-run-the-prototype)
