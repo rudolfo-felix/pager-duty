@@ -6,42 +6,13 @@ A small, runnable **incident-response agent prototype** built with LangGraph, Py
 
 ## Contents
 
-1. [Interview brief coverage](#how-this-submission-maps-to-the-interview-brief)
-2. [Context and objective](#1-context-and-objective)
-3. [Synthetic incident scenario](#2-synthetic-incident-scenario)
-4. [How the agent works](#3-how-the-agent-works)
-5. [Run the prototype](#4-run-the-prototype)
-6. [Implementation and repository map](#5-implementation-and-repository-map)
-7. [Scope and production readiness](#6-scope-and-production-readiness)
-
-## How this submission maps to the interview brief
-
-The brief separates the discussion into **Session 1: designing the agent** and **Session 2: operating it in production**. This table makes the coverage explicit, including what the take-home does not attempt to implement.
-
-### Session 1 — “In the box”
-
-| Area from the brief | What this submission demonstrates | Coverage |
-|---|---|---|
-| **Core loop** | Incident intake → tenant validation → five context reads → evidence bundle → assessment → recommendation. | <strong>Implemented</strong> |
-| **State** | Typed workflow state, SQLite snapshot and append-only event history for a local run. | <strong>Partial</strong> — no distributed recovery or long-running incident lifecycle |
-| **Memory** | Synthetic incident history is queried as one of the context tools. | <strong>Limited</strong> — no curated cross-incident memory or learning |
-| **Multiplayer** | Tenant context is validated before tool access. | <strong>Not implemented</strong> — no concurrent responders, agent coordination or shared-surface synchronization |
-| **Actions and safety** | Typed proposed mitigation, evidence validation and a stop before execution. | <strong>Partial</strong> — approval workflow and action executor are not implemented |
-| **Scale** | Identifies likely burst bottlenecks and production controls in the design discussion below. | <strong>Not implemented / not load-tested</strong> |
-| **Extensibility** | Five local read tools illustrate a narrow integration boundary. | <strong>Limited</strong> — no real MCP transport, integration registry or multilingual support |
-
-### Session 2 — “Around the box”
-
-| Area from the brief | What this submission covers | Coverage |
-|---|---|---|
-| **Knowing it works** | Unit tests cover workflow and safety invariants; production evaluation proposes incident-trace datasets and responder review. | <strong>Partial</strong> — no model-quality evaluation; assessment is deterministic and mocked |
-| **Shipping changes** | CI runs validation; production design describes versioning, shadow mode, canaries and rollback. | <strong>Partial</strong> — no deployed release pipeline or canary system |
-| **Monitoring** | Production signals and degraded-mode behaviour are specified. | <strong>Design only</strong> — no production telemetry or alerting |
-| **Cost and latency** | Budgets, quotas, retries and likely bottlenecks are identified. | <strong>Design only</strong> — no live model costs, latency measurements or load benchmarks |
-| **Trust and governance** | Tenant validation, evidence provenance and local event history; production controls include authorization, audit and approval expiry. | <strong>Partial</strong> — no production identity, policy engine or approval service |
-| **The recursive case** | Independent kill switch, read-only containment, trace preservation and regression follow-up are proposed. | <strong>Design only</strong> — no action executor exists to trigger this scenario |
-
-**Reading the coverage accurately:** “Implemented” means present in this runnable prototype. “Partial” means a bounded slice is implemented and the remaining production capability is stated. “Design only” means an approach is described, not built or validated. This is a focused take-home, not a claim that all interview areas are production-ready.
+1. [Context and objective](#1-context-and-objective)
+2. [Synthetic incident scenario](#2-synthetic-incident-scenario)
+3. [How the agent works](#3-how-the-agent-works)
+4. [Interview brief coverage](#4-interview-brief-coverage)
+5. [Run the prototype](#5-run-the-prototype)
+6. [Implementation and repository map](#6-implementation-and-repository-map)
+7. [Scope and production readiness](#7-scope-and-production-readiness)
 
 ## 1. Context and objective
 
@@ -131,7 +102,36 @@ The tools run sequentially in the order shown. Each successful read contributes 
 
 The agent must not infer authorization from its own assessment. Policy enforcement belongs in deterministic controls and the destination system, not in model-generated text.
 
-## 4. Run the prototype
+## 4. Interview brief coverage
+
+The brief separates the discussion into **Session 1: designing the agent** and **Session 2: operating it in production**. This table makes the coverage explicit, including what the take-home does not attempt to implement.
+
+### Session 1 — “In the box”
+
+| Area from the brief | What this submission demonstrates | Coverage |
+|---|---|---|
+| **Core loop** | Incident intake → tenant validation → five context reads → evidence bundle → assessment → recommendation. | <strong>Implemented</strong> |
+| **State** | Typed workflow state, SQLite snapshot and append-only event history for a local run. | <strong>Partial</strong> — no distributed recovery or long-running incident lifecycle |
+| **Memory** | Synthetic incident history is queried as one of the context tools. | <strong>Limited</strong> — no curated cross-incident memory or learning |
+| **Multiplayer** | Tenant context is validated before tool access. | <strong>Not implemented</strong> — no concurrent responders, agent coordination or shared-surface synchronization |
+| **Actions and safety** | Typed proposed mitigation, evidence validation and a stop before execution. | <strong>Partial</strong> — approval workflow and action executor are not implemented |
+| **Scale** | Identifies likely burst bottlenecks and production controls in the design discussion below. | <strong>Not implemented / not load-tested</strong> |
+| **Extensibility** | Five local read tools illustrate a narrow integration boundary. | <strong>Limited</strong> — no real MCP transport, integration registry or multilingual support |
+
+### Session 2 — “Around the box”
+
+| Area from the brief | What this submission covers | Coverage |
+|---|---|---|
+| **Knowing it works** | Unit tests cover workflow and safety invariants; production evaluation proposes incident-trace datasets and responder review. | <strong>Partial</strong> — no model-quality evaluation; assessment is deterministic and mocked |
+| **Shipping changes** | CI runs validation; production design describes versioning, shadow mode, canaries and rollback. | <strong>Partial</strong> — no deployed release pipeline or canary system |
+| **Monitoring** | Production signals and degraded-mode behaviour are specified. | <strong>Design only</strong> — no production telemetry or alerting |
+| **Cost and latency** | Budgets, quotas, retries and likely bottlenecks are identified. | <strong>Design only</strong> — no live model costs, latency measurements or load benchmarks |
+| **Trust and governance** | Tenant validation, evidence provenance and local event history; production controls include authorization, audit and approval expiry. | <strong>Partial</strong> — no production identity, policy engine or approval service |
+| **The recursive case** | Independent kill switch, read-only containment, trace preservation and regression follow-up are proposed. | <strong>Design only</strong> — no action executor exists to trigger this scenario |
+
+**Reading the coverage accurately:** “Implemented” means present in this runnable prototype. “Partial” means a bounded slice is implemented and the remaining production capability is stated. “Design only” means an approach is described, not built or validated. This is a focused take-home, not a claim that all interview areas are production-ready.
+
+## 5. Run the prototype
 
 Requirements: Python 3.11+
 
@@ -162,7 +162,7 @@ python -m unittest discover -s tests -v
 
 The demo creates a local SQLite database at `runtime/agent.db`. Use `--reset` to start with a clean demo database.
 
-## 5. Implementation and repository map
+## 6. Implementation and repository map
 
 | Concern | Prototype implementation |
 |---|---|
@@ -189,7 +189,7 @@ The demo creates a local SQLite database at `runtime/agent.db`. Use `--reset` to
 
 **Suggested reading order:** run `demo.py` → inspect `Incident` and `Evidence` in `agent.py` → follow the graph nodes → read `tests/test_agent.py` → review the production-readiness checklist below.
 
-## 6. Scope and production readiness
+## 7. Scope and production readiness
 
 ### Deliberately not implemented
 
