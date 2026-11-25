@@ -1,47 +1,33 @@
 # PagerDuty SRE Agent — design exercise
 
-A small, runnable Python sketch for the PagerDuty Senior AI/ML Engineer design exercise.
-
-## Session 1 — In the box
-
-The prototype demonstrates:
-- A bounded incident investigation loop.
-- Read-only context collection through an MCP-shaped tool boundary.
-- Tenant identity supplied by trusted server context, not model arguments.
-- Durable incident state and append-only event history in SQLite.
-- A policy broker that gates predefined writes behind explicit human approval.
-- Idempotency and revision checks around the mocked side effect.
-
-Everything external is mocked. No API key or third-party service is required.
+A minimal runnable Python sketch for Session 1 ("In the box"). The repository contains a deterministic incident investigation loop, mocked MCP-shaped read tools, SQLite-backed incident state, an approval-bound policy broker, and tests.
 
 ## Run
 
 ```bash
-python3 demo.py
-python3 demo.py --approve
+python3 demo.py --reset
+python3 demo.py --approve --reset
 python3 -m unittest discover -s tests -v
 ```
 
-The approved path is a simulation: it does not call a real deployment API. To reset local demo state, remove `runtime/`.
+No external packages, API keys, or real PagerDuty services are required. The approval path is a local simulation; it does not perform a real deployment rollback.
 
-## Session 2 — Around the box
+## Design focus
 
-Use [PRODUCTION_DISCUSSION.md](PRODUCTION_DISCUSSION.md) as interview preparation, not as a second formal take-home. It covers evaluation, safe rollout, monitoring, provider degradation, cost/latency, tenant governance, and the recursive case where the agent worsens an incident.
+1. **Safety and tenant boundary:** tenant identity is supplied by trusted server context. The mocked tool boundary rejects model-supplied tenant overrides. Writes are allowlisted and require a signed approval bound to tenant, incident, action arguments, revision, and expiry.
+2. **State and idempotency:** SQLite WAL persists incident snapshots and append-only events. The mocked action and idempotency record are committed together.
 
-## Assumptions and limitations
+## Explicit assumptions
 
-The exercise references a region-outage burst but supplies no numeric traffic profile in the source PDF. Do not present an invented number as a PagerDuty requirement; state an explicit hypothetical load assumption verbally and reason about bottlenecks.
+The assignment references a region-outage burst but the supplied PDF does not define a numeric traffic profile. Any volume or multiplier discussed in the interview should be stated as a hypothetical assumption, not as a PagerDuty requirement.
 
-This is an interview sketch, not production software:
-- SQLite is a local durability demonstration, not a multi-region shared state layer.
-- MCP is represented by an in-process mock boundary, not a remote MCP deployment.
-- Human approval is simulated; no real identity provider or approval UI exists.
-- Local idempotency cannot guarantee exactly-once effects in an external system after ambiguous network failures. Production requires downstream idempotency and reconciliation.
-- Post-action SLI verification, distributed leases/fencing, multi-responder concurrency, production telemetry, real LLM integration, and multi-region failover are out of scope.
+## Left out and why
+
+Real MCP transport, real LLM integration, authentication/approval UI, multi-responder coordination, distributed worker leases, multi-region state, model evaluations, production observability, and post-action SLI verification are intentionally omitted to keep this exercise executable without credentials or external services.
 
 ## Where it breaks first
 
-Under a burst, upstream LLM RPM/TPM limits and downstream MCP connection pools are likely to saturate before the local orchestration loop. Retries can amplify this into a thundering herd. Production defenses include alert correlation, tenant-fair queues, bounded retries with jitter, per-dependency bulkheads, circuit breakers, and severity-aware load shedding.
+At burst scale, provider RPM/TPM quotas and downstream tool connection pools are likely bottlenecks before the local orchestration loop. Retry storms amplify load. Production needs alert correlation, tenant-fair queues, bounded retries with jitter, backpressure, per-dependency bulkheads, circuit breakers, and severity-aware load shedding.
 
-For concurrent responders and workers, use a single-writer/event-sourced incident timeline or equivalent optimistic concurrency control. Bind approvals to an incident revision and invalidate them after any material human or system change. A lease alone is insufficient against zombie workers; use fencing tokens enforced by the destination where possible.
+SQLite is local demonstration persistence, not a multi-host database. Local idempotency does not solve ambiguous external effects if a remote system applies an action but its response is lost; production needs downstream idempotency and reconciliation. Concurrent humans/workers require one authoritative incident timeline, revision-based approval invalidation, and destination-enforced fencing where available.
 
