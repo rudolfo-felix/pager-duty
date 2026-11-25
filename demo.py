@@ -16,9 +16,9 @@ def main() -> None:
     incident = Incident(
         incident_id="INC-2026-0042",
         tenant_id="acme-prod",
-        service="payments-api",
+        service="checkout-api",
         severity="SEV-1",
-        summary="Elevated 503s and p95 latency following deployment v1.4.2",
+        summary="Checkout success dropped sharply; payment-provider timeouts increased after checkout-v2.8.1",
     )
     result = run_investigation(incident, store=IncidentStore(db_path))
     print("\n=== SRE AGENT INVESTIGATION ===")
@@ -31,7 +31,7 @@ def main() -> None:
         "tool_errors": result["tool_errors"],
     }, indent=2))
     print("\n=== SAFETY BOUNDARY ===")
-    print("No write action executed. The rollback is only a recommendation.")
+    print("No write action executed. The checkout deployment rollback is only a recommendation.")
     print("A human responder must decide and use an explicitly authorised action path.")
 
 
