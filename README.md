@@ -4,44 +4,50 @@ A runnable, offline prototype of an incident-response agent using **LangGraph**,
 
 ## Incident flow
 
+Read this flow from top to bottom. The main path shows what the prototype implements; the production-only recovery process is shown separately below.
+
 ```mermaid
 flowchart TD
     A(["SEV-1 checkout incident"]) --> B["Validate incident + trusted tenant"]
     B --> C["Initialise workflow state"]
 
-    subgraph G["Context gathering · mocked MCP read tools"]
+    subgraph G["1 · Gather context — mocked MCP read tools"]
       direction TB
-      D["Select next read tool"]
-      T1["Service profile + runbook"]
-      T2["Checkout metrics"]
-      T3["Dependency health"]
-      T4["Recent deployments"]
-      T5["Incident history"]
-      D --> T1 & T2 & T3 & T4 & T5
-      T1 & T2 & T3 & T4 & T5 --> R{"More tools?"}
-      T1 & T2 & T3 & T4 & T5 -. "Read failed" .-> X["Record tool error"]
-      X --> R
-      R -- "Yes" --> D
-      R -- "No" --> E["Evidence bundle"]
+      D["Run next read tool<br/>Service profile · Checkout metrics<br/>Dependency health · Recent deployments<br/>Incident history"]
+      X["Record result or tool error"]
+      R{"More tools to run?"}
+      D --> X --> R
+      R -- "Yes · continue" --> D
+      R -- "No · complete" --> E["Evidence bundle"]
     end
 
     C --> D
-    E --> F["Deterministic mock assessment"]
-    F --> V["Validate schema + evidence references"]
-    V --> H["Recommendation + proposed rollback"]
-    H --> P[("Persist state + event")]
+    E --> F["2 · Assess incident<br/>Deterministic mock assessment"]
+    F --> V["3 · Validate output<br/>Schema + evidence references"]
+    V --> H["4 · Recommend mitigation<br/>Proposed rollback"]
+    H --> P[("5 · Persist state + event")]
     P --> W(["AWAITING HUMAN DECISION"])
 
-    W -. "Outside this prototype" .-> A1["Human authorises action"]
-    A1 -.-> A2["Execute through separate, authorised system"]
-    A2 -.-> A3["Verify fresh checkout + payment metrics"]
-    A3 -. "Reassess / update incident" .-> A
-
-    classDef boundary stroke-dasharray:5 5
-    class A1,A2,A3 boundary
+    classDef implemented stroke-width:2px
+    class A,B,C,D,X,R,E,F,V,H,P,W implemented
 ```
 
-**Solid path:** implemented prototype. **Dashed path:** production feedback loop, deliberately not implemented. Tool calls are sequential in code; the loop above represents iterating through the five configured reads. A failed read is recorded as a tool error.
+**The implemented path ends at human decision.** Tool calls run sequentially. Each read produces evidence or a recorded tool error; the workflow then continues to the next configured read.
+
+### After the human decision · production extension
+
+This is the intended operational feedback loop, **not implemented in this prototype**.
+
+```mermaid
+flowchart TD
+    A(["AWAITING HUMAN DECISION"]) --> B["Human reviews and authorises"]
+    B --> C["Execute via a separate authorised system"]
+    C --> D["Verify fresh checkout + payment metrics"]
+    D --> E{"Recovered?"}
+    E -- "Yes" --> F(["Update incident · resolve"])
+    E -- "No" --> G["Reassess evidence + choose next step"]
+    G --> B
+```
 
 ## Synthetic case study · checkout SEV-1
 
