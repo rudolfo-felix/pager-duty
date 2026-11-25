@@ -4,40 +4,22 @@ A small, runnable **incident-response agent prototype** built with LangGraph, Py
 
 > **Offline by design:** incident data, tool integrations and model assessment are mocked. No PagerDuty account, API key or external service is required.
 
-## 1. Start here
+## Contents
 
-### Run the prototype
+1. [Context and objective](#1-context-and-objective)
+2. [Synthetic incident scenario](#2-synthetic-incident-scenario)
+3. [How the agent works](#3-how-the-agent-works)
+4. [Run the prototype](#4-run-the-prototype)
+5. [Implementation and repository map](#5-implementation-and-repository-map)
+6. [Scope and production considerations](#6-scope-and-production-considerations)
 
-Requirements: Python 3.11+
+## 1. Context and objective
 
-```bash
-git clone https://github.com/rudolfo-felix/pager-duty.git
-cd pager-duty
-git checkout take-home-complete
+The prototype explores a focused incident-response loop: receive an incident, gather operational context, produce an evidence-grounded assessment and recommend a next step for a human responder.
 
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+It deliberately focuses on **state management** and **actions/safety** rather than implementing a complete production incident platform.
 
-python demo.py --reset
-```
-
-The demo prints the incident, gathered evidence, structured assessment and final safety status:
-
-```text
-AWAITING_HUMAN_DECISION
-No write action executed.
-```
-
-Run the tests:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-The demo creates a local SQLite database at `runtime/agent.db`. Use `--reset` to start with a clean demo database.
-
-## 2. What happens in the scenario?
+## 2. Synthetic incident scenario
 
 At 03:00, checkout success drops while payment-provider timeouts, HTTP 5xx errors and latency rise. A recent deployment changed payment-provider timeout and retry behaviour.
 
@@ -58,7 +40,7 @@ This is a hypothesis, not a confirmed root cause. The agent proposes a mitigatio
 
 ## 3. How the agent works
 
-Follow the solid path from top to bottom. It shows the implemented prototype, from incident intake to the human-decision boundary.
+The main flow is implemented in the prototype. Follow it from top to bottom, from incident intake to the human-decision boundary.
 
 ```mermaid
 flowchart TD
@@ -102,7 +84,38 @@ flowchart TD
 
 The key boundary is deliberate: **the agent can recommend; it cannot authorize or execute a rollback.** A proposed action is not proof of recovery.
 
-## 4. Implementation at a glance
+## 4. Run the prototype
+
+Requirements: Python 3.11+
+
+```bash
+git clone https://github.com/rudolfo-felix/pager-duty.git
+cd pager-duty
+git checkout take-home-complete
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+python demo.py --reset
+```
+
+The demo prints the incident, gathered evidence, structured assessment and final safety status:
+
+```text
+AWAITING_HUMAN_DECISION
+No write action executed.
+```
+
+Run the tests:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The demo creates a local SQLite database at `runtime/agent.db`. Use `--reset` to start with a clean demo database.
+
+## 5. Implementation and repository map
 
 | Concern | Prototype implementation |
 |---|---|
@@ -130,7 +143,7 @@ The key boundary is deliberate: **the agent can recommend; it cannot authorize o
 
 **Suggested reading order:** run `demo.py` → inspect `Incident` and `Evidence` in `agent.py` → follow the graph nodes → read `tests/test_agent.py` → review `PRODUCTION_DISCUSSION.md`.
 
-## 5. Scope and production considerations
+## 6. Scope and production considerations
 
 ### Deliberately not implemented
 
