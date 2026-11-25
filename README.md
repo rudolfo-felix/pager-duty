@@ -47,22 +47,18 @@ flowchart TD
 
 At 03:00, checkout success drops and payment-provider timeouts rise. A recent deployment changed timeout/retry behaviour. The agent gathers evidence, forms hypotheses and proposes a mitigation for a human responder.
 
-<|>
 | Signal | Baseline | Incident |
 |---|---:|---:|
 | Checkout success | 98.7% | **61.2%** |
 | HTTP 5xx rate | 0.8% | **14.6%** |
 | p95 latency | 420 ms | **3,200 ms** |
 | Payment-provider timeout rate | 0.4% | **8.9%** |
-</|>
 
-<box>
 **Candidate contributor:** `checkout-v2.8.1`, deployed 11 minutes before the incident, changed payment-provider timeout and retry behaviour.
 
 **Proposed mitigation:** `rollback_deployment("checkout-v2.8.1")`.
 
 The deployment is a hypothesis, not a confirmed root cause. The agent does not execute the rollback or claim recovery. A human must validate blast radius and compatibility, authorize any change, then verify recovery using fresh signals.
-</box>
 
 > All incident IDs, metrics, services, deployments and historical records are fabricated for this exercise. The scenario is inspired by the engineering context of building an AI-enabled e-commerce platform at a stealth AI startup; it does not describe an actual outage.
 
