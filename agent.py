@@ -1,190 +1,318 @@
-"""A small, deterministic SRE-agent take-home sketch.
+"""Minimal LangGraph SRE-agent take-home prototype.
 
-All external dependencies are mocked. This is an interview prototype, not production code.
+External systems are deterministic mocks. The graph gathers evidence, asks a
+model (mock by default) for a structured assessment, validates it, and stops at
+a human-approval boundary. No write action is executed by the graph.
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
-import secrets
+import os
 import sqlite3
 import time
-from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict
 
-DB_DEFAULT = Path("runtime/agent.db")
-READ_TOOLS = {"get_service_metrics", "get_error_logs", "get_recent_deployments", "search_past_incidents"}
-WRITE_TOOLS = {"rollback_deployment"}
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field, ConfigDict, ValidationError
+
+DB_PATH = Path(os.getenv("AGENT_DB_PATH", "runtime/agent.db"))
+MAX_TOOL_CALLS = 4
 
 
-@dataclass(frozen=True)
-class Incident:
+# ---- Domain contracts -----------------------------------------------------
+
+class Incident(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     incident_id: str
     tenant_id: str
     service: str
-    severity: str
+    severity: Literal["SEV-1", "SEV-2", "SEV-3", "SEV-4"]
     summary: str
 
 
-@dataclass
-class IncidentState:
-    incident_id: str
+class Evidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    evidence_id: str
     tenant_id: str
-    status: str = "RECEIVED"
-    revision: int = 0
-    evidence: list[dict[str, Any]] | None = None
-    recommendation: str | None = None
-    action: dict[str, Any] | None = None
+    source: str
+    observed_at: str
+    freshness_seconds: int = Field(ge=0)
+    status: Literal["ok", "partial", "unavailable"]
+    data: dict[str, Any]
 
 
-class Store:
-    """SQLite WAL state, append-only event log and idempotent mock effects."""
-    def __init__(self, path: Path = DB_DEFAULT):
+class ProposedAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tool: Literal["rollback_deployment"]
+    arguments: dict[str, str]
+
+
+class Assessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: str
+    hypotheses: list[str]
+    supporting_evidence_ids: list[str]
+    contradicting_evidence_ids: list[str] = []
+    missing_information: list[str] = []
+    recommendation: str
+    action: ProposedAction | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class AgentState(TypedDict, total=False):
+    incident: dict[str, Any]
+    tenant_id: str                 # trusted server context, not model supplied
+    evidence: list[dict[str, Any]]
+    tool_errors: list[str]
+    tool_calls: int
+    assessment: dict[str, Any]
+    status: str
+    error: str
+
+
+# ---- Durable local store --------------------------------------------------
+
+class IncidentStore:
+    """SQLite WAL snapshot + append-only event journal for the demo."""
+    def __init__(self, path: Path = DB_PATH):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self.connect() as c:
-            c.executescript("""
-            PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS incidents(
-              tenant_id TEXT NOT NULL, incident_id TEXT NOT NULL,
-              state_json TEXT NOT NULL, revision INTEGER NOT NULL,
-              PRIMARY KEY(tenant_id, incident_id));
-            CREATE TABLE IF NOT EXISTS events(
-              seq INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL,
-              incident_id TEXT NOT NULL, event_type TEXT NOT NULL,
-              payload TEXT NOT NULL, created_at REAL NOT NULL);
-            CREATE TABLE IF NOT EXISTS idempotency(
-              tenant_id TEXT NOT NULL, key TEXT NOT NULL, result TEXT NOT NULL,
-              PRIMARY KEY(tenant_id, key));
-            CREATE TABLE IF NOT EXISTS mock_effects(
-              tenant_id TEXT NOT NULL, incident_id TEXT NOT NULL,
-              action TEXT NOT NULL, args TEXT NOT NULL, created_at REAL NOT NULL);
+        with self.connect() as db:
+            db.executescript("""
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS incidents(
+                    tenant_id TEXT NOT NULL, incident_id TEXT NOT NULL,
+                    status TEXT NOT NULL, state_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(tenant_id, incident_id)
+                );
+                CREATE TABLE IF NOT EXISTS incident_events(
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id TEXT NOT NULL, incident_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL, payload_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
             """)
+
     def connect(self):
-        c = sqlite3.connect(self.path, timeout=10)
-        c.row_factory = sqlite3.Row
-        return c
-    def save(self, state: IncidentState, expected_revision: int | None = None):
-        state.revision += 1
-        raw = json.dumps(asdict(state), sort_keys=True)
-        with self.connect() as c:
-            row = c.execute("SELECT revision FROM incidents WHERE tenant_id=? AND incident_id=?",
-                            (state.tenant_id, state.incident_id)).fetchone()
-            current = row["revision"] if row else 0
-            if expected_revision is not None and current != expected_revision:
-                raise RuntimeError("stale revision")
-            c.execute("""INSERT INTO incidents VALUES(?,?,?,?)
-              ON CONFLICT(tenant_id,incident_id) DO UPDATE SET state_json=excluded.state_json, revision=excluded.revision""",
-              (state.tenant_id, state.incident_id, raw, state.revision))
-            c.execute("INSERT INTO events(tenant_id,incident_id,event_type,payload,created_at) VALUES(?,?,?,?,?)",
-                      (state.tenant_id, state.incident_id, state.status, raw, time.time()))
-    def load(self, tenant_id: str, incident_id: str) -> IncidentState | None:
-        with self.connect() as c:
-            row = c.execute("SELECT state_json FROM incidents WHERE tenant_id=? AND incident_id=?",
-                            (tenant_id, incident_id)).fetchone()
-        return IncidentState(**json.loads(row["state_json"])) if row else None
-    def execute_once(self, tenant_id: str, incident_id: str, key: str, action: str, args: dict):
-        with self.connect() as c:
-            row = c.execute("SELECT result FROM idempotency WHERE tenant_id=? AND key=?",
-                            (tenant_id, key)).fetchone()
-            if row:
-                return json.loads(row["result"])
-            result = {"status": "mock_executed", "action": action, "arguments": args}
-            c.execute("INSERT INTO mock_effects VALUES(?,?,?,?,?)",
-                      (tenant_id, incident_id, action, json.dumps(args, sort_keys=True), time.time()))
-            c.execute("INSERT INTO idempotency VALUES(?,?,?)",
-                      (tenant_id, key, json.dumps(result, sort_keys=True)))
-            return result
+        db = sqlite3.connect(self.path, timeout=10)
+        db.row_factory = sqlite3.Row
+        return db
+
+    def persist(self, state: AgentState, event_type: str) -> None:
+        incident = state["incident"]
+        tenant = state["tenant_id"]
+        incident_id = incident["incident_id"]
+        payload = json.dumps(state, sort_keys=True, default=str)
+        with self.connect() as db:
+            db.execute("""INSERT INTO incidents VALUES(?,?,?,?,?)
+                ON CONFLICT(tenant_id, incident_id) DO UPDATE SET
+                status=excluded.status, state_json=excluded.state_json,
+                updated_at=excluded.updated_at""",
+                (tenant, incident_id, state.get("status", "UNKNOWN"), payload, time.time()))
+            db.execute("""INSERT INTO incident_events
+                (tenant_id, incident_id, event_type, payload_json, created_at)
+                VALUES(?,?,?,?,?)""",
+                (tenant, incident_id, event_type, payload, time.time()))
 
 
-class MCP:
-    """MCP-shaped mock boundary; tenant is injected from trusted server context."""
-    def __init__(self):
-        self.data = {
-            "get_service_metrics": {"error_rate": 0.18, "p95_ms": 1900, "window": "5m"},
-            "get_error_logs": {"sample": ["HTTP 503 upstream timeout", "HTTP 503 upstream timeout", "cache miss (red herring)"]},
-            "get_recent_deployments": {"latest": {"version": "v1.4.2", "minutes_ago": 8}},
-            "search_past_incidents": {"matches": [{"incident": "INC-104", "finding": "v1.4.2 introduced upstream timeout"}]},
-        }
-    def call(self, name: str, *, trusted_tenant_id: str, arguments: dict):
-        if name not in READ_TOOLS:
-            raise PermissionError("tool is not read-only")
-        if "tenant_id" in arguments:
-            raise PermissionError("tenant_id must come from trusted context")
-        return {"tenant_id": trusted_tenant_id, "tool": name, "data": self.data[name]}
+# ---- Mock MCP-shaped tools ------------------------------------------------
+# These functions have typed inputs/outputs and enforce tenant scope.
+# In the production design, this boundary is replaced by MCP clients.
+
+MOCK_DATA: dict[str, dict[str, Any]] = {
+    "get_service_profile": {
+        "service": "payments-api", "owner_team": "Payments Platform",
+        "criticality": "tier-1", "dependencies": ["payment-gateway", "redis"],
+        "runbook": "payments-api / elevated-5xx / rollback-last-deploy",
+    },
+    "get_service_metrics": {
+        "window": "last_5m", "error_rate": 0.18, "baseline_error_rate": 0.01,
+        "p95_latency_ms": 1900, "baseline_p95_latency_ms": 240,
+    },
+    "get_recent_deployments": {
+        "deployments": [{"version": "v1.4.2", "minutes_ago": 8,
+                         "change": "payment gateway connection pool refactor"}],
+    },
+    "search_incident_history": {
+        "matches": [{"incident_id": "INC-104", "service": "payments-api",
+                     "finding": "similar 503 spike after connection-pool change",
+                     "outcome": "rollback restored baseline", "verified": True}],
+    },
+}
 
 
-class MockLLM:
-    """Deterministic model stub. It proposes; it never executes tools."""
-    def reason(self, incident: Incident, evidence: list[dict]):
-        return {
-            "summary": "Recent deployment is the strongest correlated signal; logs and metrics show elevated upstream failures.",
-            "recommendation": "Review the v1.4.2 deployment and consider rollback after human verification.",
-            "action": {"tool": "rollback_deployment", "arguments": {"version": "v1.4.2"}},
-            "confidence": 0.78,
-        }
+def _mock_tool(name: str, tenant_id: str, incident: Incident) -> Evidence:
+    """Simulate a read-only MCP tool call, scoped by trusted tenant context."""
+    if tenant_id != incident.tenant_id:
+        raise PermissionError("tenant context does not match incident")
+    if name not in MOCK_DATA:
+        raise ValueError(f"tool is not available: {name}")
+    return Evidence(
+        evidence_id=f"ev-{incident.incident_id}-{name}",
+        tenant_id=tenant_id,
+        source=f"mcp.mock.{name}",
+        observed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        freshness_seconds=15,
+        status="ok",
+        data=MOCK_DATA[name],
+    )
 
 
-class Broker:
-    def __init__(self, store: Store, secret: bytes = b"local-demo-secret-change-me"):
-        self.store, self.secret = store, secret
-    def _signature(self, tenant: str, incident: str, revision: int, tool: str, args: dict, expires: int):
-        payload = json.dumps([tenant, incident, revision, tool, args, expires], sort_keys=True, separators=(",", ":")).encode()
-        return hmac.new(self.secret, payload, hashlib.sha256).hexdigest()
-    def request_approval(self, incident: Incident, state: IncidentState, tool: str, args: dict, ttl: int = 300):
-        if tool not in WRITE_TOOLS:
-            raise PermissionError("write tool not allowlisted")
-        if not isinstance(args.get("version"), str) or set(args) != {"version"}:
-            raise ValueError("invalid action arguments")
-        expires = int(time.time()) + ttl
-        sig = self._signature(incident.tenant_id, incident.incident_id, state.revision,
-                              tool, args, expires)
-        return {"tenant": incident.tenant_id, "incident": incident.incident_id,
-                "revision": state.revision, "tool": tool, "arguments": args,
-                "expires": expires, "signature": sig}
-    def execute(self, incident: Incident, state: IncidentState, approval: dict):
-        fields = ("tenant", "incident", "revision", "tool", "arguments", "expires")
-        expected = self._signature(*(approval[k] for k in fields))
-        if not hmac.compare_digest(expected, approval.get("signature", "")):
-            raise PermissionError("invalid or tampered approval")
-        if approval["tenant"] != incident.tenant_id or approval["incident"] != incident.incident_id:
-            raise PermissionError("tenant/incident mismatch")
-        if approval["revision"] != state.revision:
-            raise PermissionError("approval is stale")
-        if approval["expires"] < int(time.time()):
-            raise PermissionError("approval expired")
-        if approval["tool"] not in WRITE_TOOLS:
-            raise PermissionError("write tool not allowlisted")
-        key = hashlib.sha256(approval["signature"].encode()).hexdigest()
-        return self.store.execute_once(incident.tenant_id, incident.incident_id, key,
-                                       approval["tool"], approval["arguments"])
+def get_service_profile(tenant_id: str, incident: Incident) -> Evidence:
+    return _mock_tool("get_service_profile", tenant_id, incident)
 
 
-class Agent:
-    def __init__(self, store: Store, mcp: MCP | None = None, llm: MockLLM | None = None):
-        self.store, self.mcp, self.llm = store, mcp or MCP(), llm or MockLLM()
-        self.broker = Broker(store)
-    def investigate(self, incident: Incident):
-        if incident.severity not in {"SEV-1", "SEV-2", "SEV-3", "SEV-4"}:
-            raise ValueError("unknown severity")
-        state = self.store.load(incident.tenant_id, incident.incident_id) or IncidentState(
-            incident.incident_id, incident.tenant_id, evidence=[])
-        if state.status not in {"RECEIVED", "ESCALATED"}:
-            raise RuntimeError(f"incident is not investigable: {state.status}")
-        state.status = "INVESTIGATING"
-        self.store.save(state, expected_revision=state.revision)
-        calls = 0
-        for name in ("get_service_metrics", "get_error_logs", "get_recent_deployments", "search_past_incidents"):
-            if calls >= 4:
-                state.status = "ESCALATED"
+def get_service_metrics(tenant_id: str, incident: Incident) -> Evidence:
+    return _mock_tool("get_service_metrics", tenant_id, incident)
+
+
+def get_recent_deployments(tenant_id: str, incident: Incident) -> Evidence:
+    return _mock_tool("get_recent_deployments", tenant_id, incident)
+
+
+def search_incident_history(tenant_id: str, incident: Incident) -> Evidence:
+    return _mock_tool("search_incident_history", tenant_id, incident)
+
+
+# ---- Model adapter: deterministic mock by default ------------------------
+
+def _mock_assessment(incident: Incident, evidence: list[Evidence]) -> Assessment:
+    evidence_ids = [item.evidence_id for item in evidence if item.status == "ok"]
+    return Assessment(
+        summary=(
+            "Payments API has a sharp increase in 5xx errors and p95 latency. "
+            "A recent connection-pool deployment is temporally correlated, and "
+            "a verified historical incident reports a similar failure pattern."
+        ),
+        hypotheses=[
+            "The v1.4.2 connection-pool change may be exhausting or misconfiguring upstream connections.",
+            "The payment-gateway dependency may be contributing to elevated 503 responses.",
+        ],
+        supporting_evidence_ids=evidence_ids,
+        contradicting_evidence_ids=[],
+        missing_information=[
+            "Confirm payment-gateway health independently.",
+            "Check whether the deployment affected all instances or only one availability zone.",
+        ],
+        recommendation=(
+            "Ask the service owner to validate the v1.4.2 change against the runbook. "
+            "A rollback is a candidate mitigation, but should only be executed after explicit approval."
+        ),
+        action=ProposedAction(tool="rollback_deployment", arguments={"version": "v1.4.2"}),
+        confidence=0.78,
+    )
+
+
+def _live_assessment(incident: Incident, evidence: list[Evidence]) -> Assessment:
+    """Optional Gemini adapter; deliberately requires explicit opt-in."""
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    model = ChatGoogleGenerativeAI(
+        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        temperature=0,
+    ).with_structured_output(Assessment)
+    prompt = (
+        "You are assisting a human SRE responder. Use only supplied evidence. "
+        "Do not invent facts. A proposed action is not authorization to execute it. "
+        "Prefer abstention when evidence is insufficient. Return a structured assessment.\n"
+        f"Incident: {incident.model_dump_json()}\n"
+        f"Evidence: {json.dumps([x.model_dump() for x in evidence])}"
+    )
+    return model.invoke(prompt)
+
+
+def assess_incident(incident: Incident, evidence: list[Evidence]) -> Assessment:
+    if os.getenv("USE_LIVE_MODEL", "0") == "1":
+        return _live_assessment(incident, evidence)
+    return _mock_assessment(incident, evidence)
+
+
+# ---- LangGraph nodes ------------------------------------------------------
+
+def build_graph(store: IncidentStore | None = None, checkpointer=None):
+    store = store or IncidentStore()
+
+    def validate_incident(state: AgentState) -> AgentState:
+        incident = Incident.model_validate(state["incident"])
+        # Trusted tenant is injected by the calling service, not by the LLM.
+        tenant_id = state["tenant_id"]
+        if tenant_id != incident.tenant_id:
+            raise PermissionError("tenant boundary violation")
+        return {"incident": incident.model_dump(), "tenant_id": tenant_id,
+                "evidence": [], "tool_errors": [], "tool_calls": 0,
+                "status": "VALIDATED"}
+
+    def gather_context(state: AgentState) -> AgentState:
+        incident = Incident.model_validate(state["incident"])
+        tenant = state["tenant_id"]
+        tools = (get_service_profile, get_service_metrics,
+                 get_recent_deployments, search_incident_history)
+        results: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for tool in tools:
+            if len(results) + len(errors) >= MAX_TOOL_CALLS:
                 break
-            state.evidence.append(self.mcp.call(name, trusted_tenant_id=incident.tenant_id, arguments={}))
-            calls += 1
-        reasoning = self.llm.reason(incident, state.evidence)
-        state.recommendation = reasoning["recommendation"]
-        state.action = reasoning["action"]
-        state.status = "AWAITING_APPROVAL"
-        self.store.save(state, expected_revision=state.revision)
-        return state, reasoning
+            try:
+                # Independent reads are sequential in this small demo.
+                results.append(tool(tenant, incident).model_dump())
+            except Exception as exc:  # a failed source is explicit, not fabricated
+                errors.append(f"{tool.__name__}: {type(exc).__name__}: {exc}")
+        return {"evidence": results, "tool_errors": errors,
+                "tool_calls": len(results) + len(errors), "status": "CONTEXT_GATHERED"}
+
+    def reason(state: AgentState) -> AgentState:
+        incident = Incident.model_validate(state["incident"])
+        evidence = [Evidence.model_validate(x) for x in state["evidence"]]
+        assessment = assess_incident(incident, evidence)
+        valid_ids = {x.evidence_id for x in evidence}
+        if not set(assessment.supporting_evidence_ids + assessment.contradicting_evidence_ids) <= valid_ids:
+            raise ValueError("model referenced evidence outside the retrieved context")
+        return {"assessment": assessment.model_dump(), "status": "ASSESSED"}
+
+    def prepare_handoff(state: AgentState) -> AgentState:
+        # Session 1 assumption: no autonomous writes. The graph ends here.
+        return {"status": "AWAITING_HUMAN_DECISION"}
+
+    def persist(state: AgentState) -> AgentState:
+        store.persist(state, state.get("status", "UNKNOWN"))
+        return {}
+
+    graph = StateGraph(AgentState)
+    graph.add_node("validate_incident", validate_incident)
+    graph.add_node("gather_context", gather_context)
+    graph.add_node("reason", reason)
+    graph.add_node("prepare_handoff", prepare_handoff)
+    graph.add_node("persist", persist)
+    graph.add_edge(START, "validate_incident")
+    graph.add_edge("validate_incident", "gather_context")
+    graph.add_edge("gather_context", "reason")
+    graph.add_edge("reason", "prepare_handoff")
+    graph.add_edge("prepare_handoff", "persist")
+    graph.add_edge("persist", END)
+    return graph.compile(checkpointer=checkpointer or MemorySaver())
+
+
+def run_investigation(incident: Incident, *, store: IncidentStore | None = None,
+                      thread_id: str | None = None) -> AgentState:
+    store = store or IncidentStore()
+    graph = build_graph(store=store)
+    config = {"configurable": {"thread_id": thread_id or f"{incident.tenant_id}:{incident.incident_id}"}}
+    initial: AgentState = {
+        "incident": incident.model_dump(),
+        "tenant_id": incident.tenant_id,  # injected from authenticated request context in production
+        "status": "RECEIVED",
+    }
+    return graph.invoke(initial, config=config)
+
+
+if __name__ == "__main__":
+    incident = Incident(
+        incident_id="INC-2026-0042", tenant_id="acme-prod",
+        service="payments-api", severity="SEV-1",
+        summary="Elevated 503s and p95 latency following deployment v1.4.2",
+    )
+    result = run_investigation(incident)
+    print(json.dumps(result, indent=2, default=str))
