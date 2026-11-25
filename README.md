@@ -52,11 +52,11 @@ flowchart TD
 
     subgraph G["1 · Gather context — five mocked read tools"]
       direction TB
-      T1["Service profile<br/>Owner · dependencies · runbook"]
-      T2["Checkout metrics<br/>Success · errors · latency"]
-      T3["Dependency health<br/>Payment provider · database · inventory"]
-      T4["Recent deployments<br/>Versions · timing · changes"]
-      T5["Incident history<br/>Similar incidents · previous outcomes"]
+      T1["Service profile<br/>Owner, dependencies, runbook"]
+      T2["Checkout metrics<br/>Success rate, errors, latency"]
+      T3["Dependency health<br/>Payment provider, database, inventory"]
+      T4["Recent deployments<br/>Version, time, changes"]
+      T5["Incident history<br/>Similar incidents, previous outcomes"]
       T1 --> T2 --> T3 --> T4 --> T5
       T5 --> E["Evidence bundle"]
     end
@@ -84,6 +84,20 @@ flowchart TD
     class Z,J,K,L,M,N,O,P,Q production
     classDef production stroke-dasharray:5 5
 ```
+
+**Diagram legend:** solid nodes are implemented in the prototype; dashed nodes are production design only. The dashed authorization, human-approval, write-execution and recovery paths are **not implemented and are not covered by the current tests**.
+
+**What the current tests cover:**
+
+| Test | Verified behaviour |
+|---|---|
+| Core loop | Runs all five mocked reads, produces an assessment and stops at `AWAITING_HUMAN_DECISION` |
+| Evidence provenance | Evidence includes source, timestamp and the expected tenant |
+| Tenant boundary | Rejects an incident/tenant mismatch before gathering context |
+| Tool isolation | A mock tool rejects a different tenant |
+| Persistence | Saves the incident snapshot and an event record |
+
+**Not tested:** simulated read-tool failures and partial evidence; authorization-policy decisions; human approval or rejection; an authorized write executor; idempotency/retries for writes; post-action metric verification; or the recovery/reassessment loop. The code currently has no write executor or post-action verification node, so those production paths cannot yet be exercised by tests.
 
 **What each read tool provides:**
 - **Service profile:** who owns the service, what it depends on and where its runbook is.
