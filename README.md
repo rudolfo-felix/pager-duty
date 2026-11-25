@@ -171,25 +171,19 @@ The demo creates a local SQLite database at `runtime/agent.db`. Use `--reset` to
 
 MCP is represented by local MCP-shaped functions; there is no MCP client/server or network transport. SQLite and in-process checkpointing make this a local prototype, not a distributed runtime.
 
-### Where this would need to grow
+### Production considerations
 
-A production system would need durable queueing, tenant-fair scheduling, bounded concurrency and retries, backpressure, deadlines, circuit breakers, explicit degraded responses and independently enforced authorization. The action layer should enforce allowlists, resource/tenant scope, approval expiry, idempotency and audit trails. It should verify outcomes using fresh telemetry and loop back into investigation when recovery is not demonstrated.
+The take-home is intentionally small. These are the main concerns to address before operating it as a production responder.
 
-The likely early bottlenecks during correlated incident bursts are downstream observability/tool limits and model-provider quotas. This prototype does not benchmark burst capacity.
-
-### Production readiness checklist
-
-The take-home is intentionally small. The following table captures the main engineering concerns to address before operating this as a production responder.
-
-| Area | Production design | Key safeguards / signals |
-|---|---|---|
-| **Evaluation** | Build versioned incident-trace datasets from resolved incidents and responder-reviewed recommendations. Reconstruct only the evidence available at decision time. | Test ambiguity, missing or contradictory evidence, tool failures and safe abstention. Measure grounding, citation validity, hypothesis usefulness, recommendation utility and policy compliance. Combine automated regression metrics with human review. |
-| **Release process** | Version model, prompts, graph, tool schemas, retrieval rules, safety policy and evaluation data together. | Unit, contract, security and offline regression gates; then shadow, tenant/cohort canary and progressive rollout. Keep a fast rollback path. Prompts are not security boundaries. |
-| **Monitoring & degraded mode** | Monitor each tenant and release across queue age, throughput, worker saturation, stage latency, tool/model errors, retries, cost, evidence freshness, approvals and action outcomes. | Mark results degraded when critical evidence is stale or missing. Return partial evidence and escalate rather than fabricate. A fluent answer is not proof of system health. |
-| **Resilience, cost & latency** | Set independent budgets for wall time, tool calls, model calls, tokens and retries. | Bounded retries with jitter, circuit breakers, dependency bulkheads, tenant-fair queues, backpressure, deadlines and severity-aware load shedding. Evaluate fallback models independently. |
-| **Trust, tenancy & collaboration** | Enforce tenant identity and authorization server-side at every tool boundary. Keep one authoritative incident timeline. | Audit actor, tenant, incident revision, policy decision, approver, tool arguments/results, agent release and evidence references. Invalidate approvals when incident state changes. Use concurrency control and destination-enforced idempotency. |
-| **Agent-caused incident** | Provide an independent control plane to stop action capabilities and recover safely. | Revoke pending approvals, force read-only mode, preserve traces and tool I/O, enable human-led recovery, perform root-cause analysis and add the case to deterministic regression tests before re-enabling actions. |
-| **Regional outage / burst load** | Protect ingestion and downstream dependencies during correlated incident spikes. | Durable queues, priority lanes, tenant quotas, bounded concurrency, backpressure, deadlines, circuit breakers, retry budgets and partial/degraded responses. Likely early bottlenecks are observability/MCP pools and model RPM/TPM quotas. No burst capacity is benchmarked in this prototype. |
+| Area | What production needs |
+|---|---|
+| **Evaluation** | Versioned incident traces; test grounding, evidence quality, tool failures, ambiguity and safe abstention. Combine automated regression metrics with responder review. |
+| **Release safety** | Version models, prompts, graph, tools and policies together. Gate releases with unit, contract, security and offline evaluations; deploy through shadow mode and tenant canaries with fast rollback. |
+| **Monitoring** | Track queue age, latency, throughput, tool/model errors, retries, cost, evidence freshness, approvals and action outcomes. Degrade or escalate when critical evidence is missing or stale. |
+| **Resilience** | Bound time, tool/model calls, tokens and retries. Use backpressure, tenant-fair queues, circuit breakers, dependency bulkheads and severity-aware load shedding. |
+| **Trust & tenancy** | Enforce tenant scope and authorization at every tool boundary. Audit decisions and tool I/O; expire approvals when incident state changes; enforce idempotency at the destination. |
+| **Agent-caused incidents** | Keep an independent kill switch. Revoke pending approvals, force read-only mode, preserve traces, recover with a human and add the failure to regression tests. |
+| **Regional outage / burst load** | Use durable queues, priority lanes, tenant quotas, bounded concurrency and retry budgets. Watch observability/MCP pools and model RPM/TPM limits. Burst capacity is not tested here. |
 
 ---
 
