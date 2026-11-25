@@ -19,10 +19,10 @@ flowchart TD
       T5["Incident history"]
       D --> T1 & T2 & T3 & T4 & T5
       T1 & T2 & T3 & T4 & T5 --> R{"More tools?"}
+      T1 & T2 & T3 & T4 & T5 -. "Read failed" .-> X["Record tool error"]
+      X --> R
       R -- "Yes" --> D
       R -- "No" --> E["Evidence bundle"]
-      R -. "Tool failure" .-> X["Record tool error"]
-      X --> R
     end
 
     C --> D
