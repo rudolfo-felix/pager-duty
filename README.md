@@ -51,15 +51,16 @@ flowchart TD
 
     subgraph G["1 · Gather context — five mocked read tools"]
       direction TB
-      D["Run next read tool<br/>Service profile · Checkout metrics<br/>Dependency health · Recent deployments<br/>Incident history"]
-      X["Record evidence or tool error"]
-      R{"More tools to run?"}
-      D --> X --> R
-      R -- "Yes · continue" --> D
-      R -- "No · complete" --> E["Evidence bundle"]
+      T1["Service profile<br/>Owner · dependencies · runbook"]
+      T2["Checkout metrics<br/>Success · errors · latency"]
+      T3["Dependency health<br/>Payment provider · database · inventory"]
+      T4["Recent deployments<br/>Versions · timing · changes"]
+      T5["Incident history<br/>Similar incidents · previous outcomes"]
+      T1 --> T2 --> T3 --> T4 --> T5
+      T5 --> E["Evidence bundle"]
     end
 
-    C --> D
+    C --> T1
     E --> F["2 · Assess likely causes + next steps"]
     F --> V["3 · Validate assessment + evidence"]
     V --> H["4 · Recommend action"]
@@ -78,10 +79,19 @@ flowchart TD
     Q --> H
 
     classDef implemented stroke-width:2px
-    class A,B,C,D,X,R,E,F,V,H implemented
+    class A,B,C,T1,T2,T3,T4,T5,E,F,V,H implemented
     class Z,J,K,L,M,N,O,P,Q production
     classDef production stroke-dasharray:5 5
 ```
+
+**What each read tool provides:**
+- **Service profile:** who owns the service, what it depends on and where its runbook is.
+- **Checkout metrics:** whether checkout success, error rate and latency have changed.
+- **Dependency health:** whether connected systems, such as the payment provider, database or inventory service, are degraded.
+- **Recent deployments:** what changed recently and whether the timing correlates with the incident.
+- **Incident history:** whether similar incidents happened before and what happened after previous mitigations.
+
+The tools run sequentially in the order shown. Each successful read contributes evidence to the bundle; a failed read is recorded as a tool error, and the remaining reads continue. The prototype uses deterministic mock data for all five.
 
 **How to read the boundary:**
 - **Implemented in this take-home:** incident validation, five sequential mock reads, evidence bundle, deterministic assessment, output validation, recommendation and persistence.
