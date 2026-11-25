@@ -18,7 +18,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, ConfigDict, ValidationError
 
 DB_PATH = Path(os.getenv("AGENT_DB_PATH", "runtime/agent.db"))
-MAX_TOOL_CALLS = 4
+MAX_TOOL_CALLS = 5
 
 
 # ---- Domain contracts -----------------------------------------------------
@@ -124,22 +124,31 @@ class IncidentStore:
 
 MOCK_DATA: dict[str, dict[str, Any]] = {
     "get_service_profile": {
-        "service": "payments-api", "owner_team": "Payments Platform",
-        "criticality": "tier-1", "dependencies": ["payment-gateway", "redis"],
-        "runbook": "payments-api / elevated-5xx / rollback-last-deploy",
+        "service": "checkout-api", "owner_team": "Commerce Platform",
+        "criticality": "tier-1",
+        "dependencies": ["payment-provider", "orders-db", "inventory-api"],
+        "runbook": "checkout-api / checkout-success-degradation / assess-payment-provider",
+        "customer_impact": "Customers may be unable to complete purchases",
     },
-    "get_service_metrics": {
-        "window": "last_5m", "error_rate": 0.18, "baseline_error_rate": 0.01,
-        "p95_latency_ms": 1900, "baseline_p95_latency_ms": 240,
+    "get_checkout_metrics": {
+        "window": "last_5m", "checkout_success_rate": 0.612,
+        "baseline_checkout_success_rate": 0.987, "http_5xx_rate": 0.146,
+        "baseline_http_5xx_rate": 0.008, "p95_latency_ms": 3200,
+        "baseline_p95_latency_ms": 420, "sample_size": 18420,
+    },
+    "get_dependency_health": {
+        "payment_provider": {"timeout_rate": 0.089, "baseline_timeout_rate": 0.004, "p95_latency_ms": 2400, "status": "degraded"},
+        "orders_db": {"status": "healthy", "connection_pool_utilization": 0.54},
+        "inventory_api": {"status": "healthy", "error_rate": 0.006},
     },
     "get_recent_deployments": {
-        "deployments": [{"version": "v1.4.2", "minutes_ago": 8,
-                         "change": "payment gateway connection pool refactor"}],
+        "deployments": [{"service": "checkout-api", "version": "checkout-v2.8.1", "minutes_ago": 11,
+                         "change": "payment-provider client timeout and retry-policy refactor", "environment": "production"}],
     },
     "search_incident_history": {
-        "matches": [{"incident_id": "INC-104", "service": "payments-api",
-                     "finding": "similar 503 spike after connection-pool change",
-                     "outcome": "rollback restored baseline", "verified": True}],
+        "matches": [{"incident_id": "INC-2025-0187", "service": "checkout-api",
+                     "finding": "checkout success degraded after payment-provider retry-policy change",
+                     "outcome": "configuration rollback restored checkout success rate", "verified": True}],
     },
 }
 
@@ -165,8 +174,12 @@ def get_service_profile(tenant_id: str, incident: Incident) -> Evidence:
     return _mock_tool("get_service_profile", tenant_id, incident)
 
 
-def get_service_metrics(tenant_id: str, incident: Incident) -> Evidence:
-    return _mock_tool("get_service_metrics", tenant_id, incident)
+def get_checkout_metrics(tenant_id: str, incident: Incident) -> Evidence:
+    return _mock_tool("get_checkout_metrics", tenant_id, incident)
+
+
+def get_dependency_health(tenant_id: str, incident: Incident) -> Evidence:
+    return _mock_tool("get_dependency_health", tenant_id, incident)
 
 
 def get_recent_deployments(tenant_id: str, incident: Incident) -> Evidence:
@@ -183,26 +196,29 @@ def _mock_assessment(incident: Incident, evidence: list[Evidence]) -> Assessment
     evidence_ids = [item.evidence_id for item in evidence if item.status == "ok"]
     return Assessment(
         summary=(
-            "Payments API has a sharp increase in 5xx errors and p95 latency. "
-            "A recent connection-pool deployment is temporally correlated, and "
-            "a verified historical incident reports a similar failure pattern."
+            "Checkout success has fallen materially while 5xx responses and p95 latency "
+            "have increased. Payment-provider timeouts are elevated, and a recent "
+            "checkout deployment changed timeout and retry behaviour."
         ),
         hypotheses=[
-            "The v1.4.2 connection-pool change may be exhausting or misconfiguring upstream connections.",
-            "The payment-gateway dependency may be contributing to elevated 503 responses.",
+            "The checkout-v2.8.1 timeout/retry-policy change may be causing slow or repeated payment-provider requests.",
+            "Degraded payment-provider responses may be the immediate dependency-level cause of checkout failures.",
         ],
         supporting_evidence_ids=evidence_ids,
         contradicting_evidence_ids=[],
         missing_information=[
-            "Confirm payment-gateway health independently.",
-            "Check whether the deployment affected all instances or only one availability zone.",
+            "Confirm payment-provider status through its independent status channel.",
+            "Compare timeout and retry counts by checkout instance and deployment cohort.",
+            "Check whether the provider has rate-limited this tenant or changed its response profile.",
         ],
         recommendation=(
-            "Ask the service owner to validate the v1.4.2 change against the runbook. "
-            "A rollback is a candidate mitigation, but should only be executed after explicit approval."
+            "Page the Commerce Platform owner and validate checkout-v2.8.1 against the runbook. "
+            "A rollback is a candidate mitigation, but first confirm blast radius and compatibility; "
+            "execute only after explicit human approval. Verify checkout success and payment latency "
+            "with fresh metrics after any approved change."
         ),
-        action=ProposedAction(tool="rollback_deployment", arguments={"version": "v1.4.2"}),
-        confidence=0.78,
+        action=ProposedAction(tool="rollback_deployment", arguments={"version": "checkout-v2.8.1"}),
+        confidence=0.81,
     )
 
 
@@ -248,7 +264,7 @@ def build_graph(store: IncidentStore | None = None, checkpointer=None):
     def gather_context(state: AgentState) -> AgentState:
         incident = Incident.model_validate(state["incident"])
         tenant = state["tenant_id"]
-        tools = (get_service_profile, get_service_metrics,
+        tools = (get_service_profile, get_checkout_metrics, get_dependency_health,
                  get_recent_deployments, search_incident_history)
         results: list[dict[str, Any]] = []
         errors: list[str] = []
@@ -311,8 +327,8 @@ def run_investigation(incident: Incident, *, store: IncidentStore | None = None,
 if __name__ == "__main__":
     incident = Incident(
         incident_id="INC-2026-0042", tenant_id="acme-prod",
-        service="payments-api", severity="SEV-1",
-        summary="Elevated 503s and p95 latency following deployment v1.4.2",
+        service="checkout-api", severity="SEV-1",
+        summary="Checkout success dropped sharply; payment-provider timeouts increased after checkout-v2.8.1",
     )
     result = run_investigation(incident)
     print(json.dumps(result, indent=2, default=str))
