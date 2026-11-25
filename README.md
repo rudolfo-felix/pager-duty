@@ -6,18 +6,47 @@ A small, runnable **incident-response agent prototype** built with LangGraph, Py
 
 ## Contents
 
-1. [Context and objective](#1-context-and-objective)
-2. [Synthetic incident scenario](#2-synthetic-incident-scenario)
-3. [How the agent works](#3-how-the-agent-works)
-4. [Run the prototype](#4-run-the-prototype)
-5. [Implementation and repository map](#5-implementation-and-repository-map)
-6. [Scope and production readiness](#6-scope-and-production-readiness)
+1. [Interview brief coverage](#how-this-submission-maps-to-the-interview-brief)\n2. [Context and objective](#1-context-and-objective)
+3. [Synthetic incident scenario](#2-synthetic-incident-scenario)
+4. [How the agent works](#3-how-the-agent-works)
+5. [Run the prototype](#4-run-the-prototype)
+6. [Implementation and repository map](#5-implementation-and-repository-map)
+7. [Scope and production readiness](#6-scope-and-production-readiness)
+
+## How this submission maps to the interview brief
+
+The brief separates the discussion into **Session 1: designing the agent** and **Session 2: operating it in production**. This table makes the coverage explicit, including what the take-home does not attempt to implement.
+
+### Session 1 — “In the box”
+
+| Area from the brief | What this submission demonstrates | Coverage |
+|---|---|---|
+| **Core loop** | Incident intake → tenant validation → five context reads → evidence bundle → assessment → recommendation. | <strong>Implemented</strong> |
+| **State** | Typed workflow state, SQLite snapshot and append-only event history for a local run. | <strong>Partial</strong> — no distributed recovery or long-running incident lifecycle |
+| **Memory** | Synthetic incident history is queried as one of the context tools. | <strong>Limited</strong> — no curated cross-incident memory or learning |
+| **Multiplayer** | Tenant context is validated before tool access. | <strong>Not implemented</strong> — no concurrent responders, agent coordination or shared-surface synchronization |
+| **Actions and safety** | Typed proposed mitigation, evidence validation and a stop before execution. | <strong>Partial</strong> — approval workflow and action executor are not implemented |
+| **Scale** | Identifies likely burst bottlenecks and production controls in the design discussion below. | <strong>Not implemented / not load-tested</strong> |
+| **Extensibility** | Five local read tools illustrate a narrow integration boundary. | <strong>Limited</strong> — no real MCP transport, integration registry or multilingual support |
+
+### Session 2 — “Around the box”
+
+| Area from the brief | What this submission covers | Coverage |
+|---|---|---|
+| **Knowing it works** | Unit tests cover workflow and safety invariants; production evaluation proposes incident-trace datasets and responder review. | <strong>Partial</strong> — no model-quality evaluation; assessment is deterministic and mocked |
+| **Shipping changes** | CI runs validation; production design describes versioning, shadow mode, canaries and rollback. | <strong>Partial</strong> — no deployed release pipeline or canary system |
+| **Monitoring** | Production signals and degraded-mode behaviour are specified. | <strong>Design only</strong> — no production telemetry or alerting |
+| **Cost and latency** | Budgets, quotas, retries and likely bottlenecks are identified. | <strong>Design only</strong> — no live model costs, latency measurements or load benchmarks |
+| **Trust and governance** | Tenant validation, evidence provenance and local event history; production controls include authorization, audit and approval expiry. | <strong>Partial</strong> — no production identity, policy engine or approval service |
+| **The recursive case** | Independent kill switch, read-only containment, trace preservation and regression follow-up are proposed. | <strong>Design only</strong> — no action executor exists to trigger this scenario |
+
+**Reading the coverage accurately:** “Implemented” means present in this runnable prototype. “Partial” means a bounded slice is implemented and the remaining production capability is stated. “Design only” means an approach is described, not built or validated. This is a focused take-home, not a claim that all interview areas are production-ready.
 
 ## 1. Context and objective
 
 PagerDuty's SRE Agent acts as a virtual responder: when an incident triggers, it gathers context from observability, on-call and service ownership data, and incident history. It suggests likely root causes and next actions. **Where an action has been explicitly authorised, it can also run the approved automation and verify whether the fix worked.**
 
-The important distinction is that authorisation is not the same as a recommendation. The agent must never grant itself permission. A production system should evaluate an action against explicit policy and authorization context: some actions may be pre-approved within a defined scope; others require a human responder to approve them. Every executed action must be verified using fresh operational signals.
+The important distinction is that authorisation is not the same as a recommendation. The agent must never grant itself permission. For this exercise, any state-changing action requires explicit human approval, consistent with the brief's assumption of predefined actions that need approval and no autonomous actions. A broader production policy may support tightly scoped pre-authorized automations, but that is outside this prototype. Every executed action must be verified using fresh operational signals.
 
 This take-home implements the investigation and recommendation slice. Its local demo deliberately has no write executor, so it stops before any state-changing action.
 
@@ -36,7 +65,7 @@ At 03:00, checkout success drops while payment-provider timeouts, HTTP 5xx error
 
 **Proposed mitigation:** `rollback_deployment("checkout-v2.8.1")`.
 
-This is a hypothesis, not a confirmed root cause. Whether a rollback can run automatically depends on explicit authorization, action scope and policy—not on the model's confidence or recommendation alone.
+This is a hypothesis, not a confirmed root cause. For this take-home, the proposed rollback would require explicit human approval before execution. Model confidence is never authorization.
 
 > All incident IDs, metrics, services, deployments and historical records are fabricated for this exercise. The scenario is inspired by the engineering context of building an AI-enabled e-commerce platform at a stealth AI startup; it does not describe an actual outage.
 
@@ -96,7 +125,7 @@ The tools run sequentially in the order shown. Each successful read contributes 
 **How to read the boundary:**
 - **Implemented in this take-home:** incident validation, five sequential mock reads, evidence bundle, deterministic assessment, output validation, recommendation and persistence.
 - **Production flow:** deterministic authorization check, human approval when needed, execution through an authorized tool, and post-action verification.
-- **Two valid outcomes:** a pre-authorized action can proceed without a new human approval; an action outside that authorization scope must be reviewed or handed off.
+- **Approval boundary:** for this exercise, every state-changing action requires explicit human approval; disallowed actions are handed off without execution.
 - **Recovery is a feedback loop:** if fresh signals do not show recovery, the agent reassesses rather than declaring success.
 
 The agent must not infer authorization from its own assessment. Policy enforcement belongs in deterministic controls and the destination system, not in model-generated text.
@@ -173,7 +202,7 @@ MCP is represented by local MCP-shaped functions; there is no MCP client/server 
 
 ### Production considerations
 
-The take-home is intentionally small. These are the main concerns to address before operating it as a production responder.
+These are production design considerations, not implemented capabilities. They describe what would need to be added before operating the prototype as a production responder.
 
 | Area | What production needs |
 |---|---|
