@@ -68,6 +68,7 @@ flowchart TD
     H --> Z{"Matching trusted approval grant?"}
 
     Z -- "No / missing" --> M(["AWAITING HUMAN DECISION"])
+    Z -- "Mismatched / rejected" --> R(["AUTHORIZATION REJECTED"])
     Z -- "Yes" --> J["Mock rollback executor"]
     J --> N["Verify with fresh mock metrics"]
     N --> O{"Recovery thresholds met?"}
@@ -75,7 +76,7 @@ flowchart TD
     O -- "No" --> Q["RECOVERY NOT CONFIRMED<br/>Reassess and request a new decision"]
 
     classDef implemented stroke-width:2px
-    class A,B,C,T1,T2,T3,T4,T5,E,F,V,H,Z,J,N,O,P,Q,M implemented
+    class A,B,C,T1,T2,T3,T4,T5,E,F,V,H,Z,J,N,O,P,Q,M,R implemented
 ```
 
 **Diagram legend:** all nodes shown are implemented using deterministic local mocks. The rollback executor and post-action metrics are simulations, not real deployment or observability integrations.
@@ -135,7 +136,7 @@ The brief separates the discussion into **Session 1: designing the agent** and *
 | **Monitoring** | Production signals and degraded-mode behaviour are specified. | <strong>Design only</strong> — no production telemetry or alerting |
 | **Cost and latency** | Budgets, quotas, retries and likely bottlenecks are identified. | <strong>Design only</strong> — no live model costs, latency measurements or load benchmarks |
 | **Trust and governance** | Tenant validation, evidence provenance and local event history; production controls include authorization, audit and approval expiry. | <strong>Partial</strong> — no production identity, policy engine or approval service |
-| **The recursive case** | Independent kill switch, read-only containment, trace preservation and regression follow-up are proposed. | <strong>Design only</strong> — no action executor exists to trigger this scenario |
+| **The recursive case** | Independent kill switch, read-only containment, trace preservation and regression follow-up are proposed. | <strong>Design only</strong> — no production executor exists to trigger this scenario |
 
 **Reading the coverage accurately:** “Implemented” means present in this runnable prototype. “Partial” means a bounded slice is implemented and the remaining production capability is stated. “Design only” means an approach is described, not built or validated. This is a focused take-home, not a claim that all interview areas are production-ready.
 
@@ -153,6 +154,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 python demo.py --reset
+```
+
+To exercise the mock write path, run either of these alternatives:
+
+```bash
+# Simulate a matching human approval, mock rollback and successful recovery
+python demo.py --approve-rollback --reset
+
+# Simulate an approved mock rollback where fresh metrics do not show recovery
+python demo.py --approve-rollback --simulate-no-recovery --reset
 ```
 
 The demo prints the incident, gathered evidence, structured assessment and final safety status:
@@ -195,7 +206,7 @@ The demo creates a local SQLite database at `runtime/agent.db`. Use `--reset` to
 | `requirements.txt` | Python dependencies |
 | `.github/workflows/validate.yml` | CI: install, tests and demo |
 
-**Suggested reading order:** run `demo.py` → inspect `Incident` and `Evidence` in `agent.py` → follow the graph nodes → read `tests/test_agent.py` → review the production-readiness checklist below.
+**Suggested reading order:** run the default demo → try the approved and failed-recovery mock paths → inspect `Incident`, `ActionAuthorization` and the graph in `agent.py` → read `tests/test_agent.py` → review the production-readiness checklist below.
 
 ## 7. Scope and production readiness
 
