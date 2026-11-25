@@ -1,28 +1,39 @@
+"""Run the mocked SRE-agent investigation locally."""
+from __future__ import annotations
+import argparse
+import json
 from pathlib import Path
-import argparse, json, shutil
-from agent import Agent, Incident, Store
+from agent import Incident, IncidentStore, run_investigation
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--approve", action="store_true", help="simulate explicit human approval")
-    parser.add_argument("--reset", action="store_true", help="remove local runtime database first")
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--reset", action="store_true", help="delete the local SQLite demo database")
     args = parser.parse_args()
-    db = Path("runtime") / ("approved.db" if args.approve else "agent.db")
-    if args.reset and db.exists():
-        db.unlink()
-    incident = Incident("INC-001", "tenant-demo", "payments", "SEV-1", "Elevated 503 errors after deploy")
-    agent = Agent(Store(db))
-    state, reasoning = agent.investigate(incident)
-    print("INVESTIGATION")
-    print(json.dumps({"state": state.__dict__, "reasoning": reasoning}, indent=2))
-    if args.approve:
-        approval = agent.broker.request_approval(incident, state, reasoning["action"]["tool"],
-                                                 reasoning["action"]["arguments"])
-        result = agent.broker.execute(incident, state, approval)
-        print("\nHUMAN APPROVAL SIMULATED — MOCK ACTION RESULT")
-        print(json.dumps(result, indent=2))
-    else:
-        print("\nNo write action executed; human approval is required.")
+    db_path = Path("runtime/agent.db")
+    if args.reset and db_path.exists():
+        db_path.unlink()
+    incident = Incident(
+        incident_id="INC-2026-0042",
+        tenant_id="acme-prod",
+        service="payments-api",
+        severity="SEV-1",
+        summary="Elevated 503s and p95 latency following deployment v1.4.2",
+    )
+    result = run_investigation(incident, store=IncidentStore(db_path))
+    print("\n=== SRE AGENT INVESTIGATION ===")
+    print(json.dumps({
+        "incident": result["incident"],
+        "status": result["status"],
+        "tool_calls": result["tool_calls"],
+        "evidence": result["evidence"],
+        "assessment": result["assessment"],
+        "tool_errors": result["tool_errors"],
+    }, indent=2))
+    print("\n=== SAFETY BOUNDARY ===")
+    print("No write action executed. The rollback is only a recommendation.")
+    print("A human responder must decide and use an explicitly authorised action path.")
+
 
 if __name__ == "__main__":
     main()
