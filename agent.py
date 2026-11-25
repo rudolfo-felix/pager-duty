@@ -222,27 +222,8 @@ def _mock_assessment(incident: Incident, evidence: list[Evidence]) -> Assessment
     )
 
 
-def _live_assessment(incident: Incident, evidence: list[Evidence]) -> Assessment:
-    """Optional Gemini adapter; deliberately requires explicit opt-in."""
-    from langchain_google_genai import ChatGoogleGenerativeAI
-
-    model = ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-        temperature=0,
-    ).with_structured_output(Assessment)
-    prompt = (
-        "You are assisting a human SRE responder. Use only supplied evidence. "
-        "Do not invent facts. A proposed action is not authorization to execute it. "
-        "Prefer abstention when evidence is insufficient. Return a structured assessment.\n"
-        f"Incident: {incident.model_dump_json()}\n"
-        f"Evidence: {json.dumps([x.model_dump() for x in evidence])}"
-    )
-    return model.invoke(prompt)
-
-
 def assess_incident(incident: Incident, evidence: list[Evidence]) -> Assessment:
-    if os.getenv("USE_LIVE_MODEL", "0") == "1":
-        return _live_assessment(incident, evidence)
+    """Fully local deterministic model substitute; no provider call is made."""
     return _mock_assessment(incident, evidence)
 
 
