@@ -11,7 +11,7 @@ A small, runnable **incident-response agent prototype** built with LangGraph, Py
 3. [How the agent works](#3-how-the-agent-works)
 4. [Run the prototype](#4-run-the-prototype)
 5. [Implementation and repository map](#5-implementation-and-repository-map)
-6. [Scope and production considerations](#6-scope-and-production-considerations)
+6. [Scope and production readiness](#6-scope-and-production-readiness)
 
 ## 1. Context and objective
 
