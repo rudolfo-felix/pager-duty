@@ -92,6 +92,10 @@ flowchart TD
       X --> Y --> Z
       Z -- "Yes" --> OK
       Z -- "No" --> NO
+      OK --> S["Persist status + incident event<br/>PARTIAL · local SQLite snapshot + journal"]
+      NO --> S
+      W --> S
+      R --> S
     end
 
     subgraph TARGET["B · PRODUCTION TARGET — not implemented in this repository"]
@@ -116,7 +120,7 @@ flowchart TD
     classDef implemented fill:#dcfce7,stroke:#15803d,color:#14532d,stroke-width:2px
     classDef partial fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px
     classDef planned fill:#e5e7eb,stroke:#64748b,color:#1f2937,stroke-dasharray:5 5
-    class A,C,T1,T2,T3,T4,T5,E,F,P,G,X,Y,Z partial
+    class A,C,T1,T2,T3,T4,T5,E,F,P,G,X,Y,Z,S partial
     class B,V,W,R,OK,NO implemented
     class PG,PD,AUTO,HUMAN,HD,HEXEC,STOP planned
 ```
