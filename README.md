@@ -116,7 +116,7 @@ flowchart TD
     classDef implemented fill:#dcfce7,stroke:#15803d,color:#14532d,stroke-width:2px
     classDef partial fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px
     classDef planned fill:#e5e7eb,stroke:#64748b,color:#1f2937,stroke-dasharray:5 5
-    class A,C,T1,T2,T3,T4,T5,E,F,P,G,X,Y planned
+    class A,C,T1,T2,T3,T4,T5,E,F,P,G,X,Y,Z partial
     class B,V,W,R,OK,NO implemented
     class PG,PD,AUTO,HUMAN,HD,HEXEC,STOP planned
 ```
