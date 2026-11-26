@@ -106,6 +106,10 @@ flowchart TD
       HUMAN["Request human approval<br/>Only when policy requires it"]
       HD{"Approved?"}
       HEXEC["Execute only the approved action<br/>within the approved scope"]
+      PV["Verify outcome using fresh telemetry<br/>NOT IMPLEMENTED"]
+      RT{"Recovery confirmed within<br/>the verification window?"}
+      CLOSE["Update incident as recovered<br/>record evidence and action outcome"]
+      FAIL["Stop further writes; keep incident open<br/>gather fresh evidence and escalate"]
       STOP["Do not write; keep incident open<br/>and escalate to the on-call responder"]
       PG --> PD
       PD -- "Pre-authorized match" --> AUTO
@@ -113,6 +117,11 @@ flowchart TD
       HD -- "Yes" --> HEXEC
       HD -- "No / timeout" --> STOP
       PD -- "Denied / uncertain" --> STOP
+      AUTO --> PV
+      HEXEC --> PV
+      PV --> RT
+      RT -- "Yes" --> CLOSE
+      RT -- "No / timeout" --> FAIL
     end
 
     P --> G
@@ -122,7 +131,7 @@ flowchart TD
     classDef planned fill:#e5e7eb,stroke:#64748b,color:#1f2937,stroke-dasharray:5 5
     class A,C,T1,T2,T3,T4,T5,E,F,P,G,X,Y,Z,S partial
     class B,V,W,R,OK,NO implemented
-    class PG,PD,AUTO,HUMAN,HD,HEXEC,STOP planned
+    class PG,PD,AUTO,HUMAN,HD,HEXEC,PV,RT,CLOSE,FAIL,STOP planned
 ```
 
 **How to interpret the highlight:**
