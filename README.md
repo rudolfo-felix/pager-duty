@@ -43,59 +43,93 @@ This is a hypothesis, not a confirmed root cause. For this take-home, the propos
 
 ## 3. How the agent works
 
-The end-to-end lifecycle below separates the **implemented agent path** from the **external human-decision boundary**. The prototype validates a caller-supplied approval grant; it does not implement the responder UI, approval service or notification/resume workflow.
+This diagram deliberately shows **two different views** after the agent proposes an action:
+
+1. **Repository today:** the take-home path currently implemented and tested. It requires a caller-supplied, exact `ActionAuthorization` grant before the mock write can run.
+2. **Production target:** a policy-first SRE Agent. A safe action that matches a policy approved in advance can execute without waking a human at incident time. Human approval is a fallback for actions outside that pre-authorized envelope; denied or uncertain actions do not execute.
+
+The colors are a coverage map of this repository, not a claim that the production target is already built.
 
 ```mermaid
 flowchart TD
-    A(["Incident triggers"]) --> B["Validate incident + tenant scope"]
-    B --> C["Initialise workflow state"]
-
-    subgraph G["1 · Gather context — five mocked read tools"]
+    A(["Synthetic incident input<br/>PARTIAL · local fixture"]) --> B["Validate incident schema + tenant boundary<br/>IMPLEMENTED"]
+    B --> C["LangGraph workflow state<br/>PARTIAL · local checkpoint"]
+    
+    subgraph CTX["1 · Context acquisition"]
       direction TB
-      T1["Service profile<br/>Owner, dependencies, runbook"]
-      T2["Checkout metrics<br/>Success rate, errors, latency"]
-      T3["Dependency health<br/>Payment provider, database, inventory"]
-      T4["Recent deployments<br/>Version, time, changes"]
-      T5["Incident history<br/>Similar incidents, previous outcomes"]
-      T1 --> T2 --> T3 --> T4 --> T5
-      T5 --> E["Evidence bundle"]
+      T1["Service ownership + runbook<br/>PARTIAL · mocked read tool"]
+      T2["Checkout / observability metrics<br/>PARTIAL · mocked read tool"]
+      T3["Dependency health<br/>PARTIAL · mocked read tool"]
+      T4["Recent deployments / changes<br/>PARTIAL · mocked read tool"]
+      T5["Incident history<br/>PARTIAL · synthetic fixture"]
+      T1 --> E["Evidence bundle<br/>PARTIAL · typed, timestamped, tenant-scoped"]
+      T2 --> E
+      T3 --> E
+      T4 --> E
+      T5 --> E
     end
 
     C --> T1
-    E --> F["2 · Assess likely causes + next steps"]
-    F --> V["3 · Validate assessment + evidence"]
-    V --> H["4 · Produce recommendation + exact proposed action"]
+    E --> F["2 · Assess hypotheses + recommend next step<br/>PARTIAL · deterministic mock, no LLM"]
+    F --> V["Validate evidence references<br/>IMPLEMENTED"]
+    V --> P["3 · Produce exact proposed action<br/>PARTIAL · rollback candidate from fixture"]
 
-    subgraph HUMAN["External human decision — not implemented"]
+    subgraph TODAY["A · TAKE-HOME REPOSITORY PATH — implemented flow"]
       direction TB
-      U["Responder reviews evidence, impact and proposed action"]
-      D{"Decision"}
-      U --> D
-      D -- "Approve exact proposal" --> G1["Caller supplies ActionAuthorization grant"]
-      D -- "Reject / defer / no response" --> G0["No approval grant supplied"]
+      G["check_authorization()<br/>PARTIAL · checks caller-supplied grant fields;<br/>no grant issuer or identity verification"]
+      D{"Exact tenant + incident + action +<br/>arguments + allowlist match?"}
+      W(["AWAITING_HUMAN_DECISION<br/>IMPLEMENTED outcome · no write"])
+      R(["AUTHORIZATION_REJECTED<br/>IMPLEMENTED outcome · no write"])
+      X["Mock rollback executor<br/>PARTIAL · simulated side effect only"]
+      Y["Post-action recovery check<br/>PARTIAL · synthetic metrics + fixed thresholds"]
+      Z{"Recovery thresholds met?"}
+      OK(["RECOVERY_VERIFIED<br/>IMPLEMENTED branch · synthetic evidence"])
+      NO(["RECOVERY_NOT_CONFIRMED<br/>IMPLEMENTED branch · no automatic repeat"])
+      G --> D
+      D -- "No grant supplied" --> W
+      D -- "Invalid / mismatched" --> R
+      D -- "Exact matching grant" --> X
+      X --> Y --> Z
+      Z -- "Yes" --> OK
+      Z -- "No" --> NO
     end
 
-    H --> U
-    G1 -. "grant input" .-> Z{"Grant matches tenant, incident,<br/>action, arguments and allowlist?"}
-    G0 -. "no grant" .-> M(["AWAITING HUMAN DECISION<br/>No write; incident remains open"])
-    Z -- "Absent" --> M
-    Z -- "Invalid / mismatched" --> R(["AUTHORIZATION REJECTED<br/>No write executed"])
-    Z -- "Exact match" --> J["Mock rollback executor"]
-    J --> N["Verify using fresh mock metrics"]
-    N --> O{"Recovery thresholds met?"}
-    O -- "Yes" --> P(["RECOVERY VERIFIED<br/>Synthetic metrics only"])
-    O -- "No" --> Q(["RECOVERY NOT CONFIRMED<br/>Keep incident open; no automatic repeat"])
-    Q --> X["Gather updated evidence and request a new human decision"]
+    subgraph TARGET["B · PRODUCTION TARGET — not implemented in this repository"]
+      direction TB
+      PG["Deterministic policy engine<br/>Pre-approved scope, action allowlist,<br/>preconditions, blast-radius and safety limits"]
+      PD{"Policy outcome"}
+      AUTO["Execute bounded pre-authorized action<br/>NO incident-time human approval"]
+      HUMAN["Request human approval<br/>Only when policy requires it"]
+      HD{"Approved?"}
+      HEXEC["Execute only the approved action<br/>within the approved scope"]
+      STOP["Do not write; keep incident open<br/>and escalate to the on-call responder"]
+      PG --> PD
+      PD -- "Pre-authorized match" --> AUTO
+      PD -- "Approval required" --> HUMAN --> HD
+      HD -- "Yes" --> HEXEC
+      HD -- "No / timeout" --> STOP
+      PD -- "Denied / uncertain" --> STOP
+    end
 
-    classDef implemented stroke-width:2px
-    classDef boundary stroke-dasharray:5 5,stroke-width:1px
-    class A,B,C,T1,T2,T3,T4,T5,E,F,V,H,Z,J,N,O,P,Q,M,R,X implemented
-    class U,D,G1,G0 boundary
+    P --> G
+    P -. "Future policy-first route" .-> PG
+    classDef implemented fill:#dcfce7,stroke:#15803d,color:#14532d,stroke-width:2px
+    classDef partial fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px
+    classDef planned fill:#e5e7eb,stroke:#64748b,color:#1f2937,stroke-dasharray:5 5
+    class A,C,T1,T2,T3,T4,T5,E,F,P,G,X,Y planned
+    class B,V,W,R,OK,NO implemented
+    class PG,PD,AUTO,HUMAN,HD,HEXEC,STOP planned
 ```
 
-**Decision semantics:** approving means the caller passes a grant for the exact proposed tenant, incident, action and arguments; only a matching grant reaches the mock executor. Rejecting, deferring or not responding means no grant is supplied, so the implemented path stops at `AWAITING_HUMAN_DECISION` with no write. A malformed or mismatched grant stops at `AUTHORIZATION_REJECTED`. The current prototype does not record an explicit human-denial event or resume a paused graph; those belong to the external approval workflow. The `ActionAuthorization` object is caller-supplied and its fields are checked, but this prototype does not authenticate the approver or prove the grant's origin.
+**How to interpret the highlight:**
 
-**Diagram legend:** solid nodes are implemented with deterministic local mocks; dashed nodes are external and not implemented. The rollback executor and post-action metrics are simulations, not real deployment or observability integrations.
+- <span style="color:#15803d"><strong>Green — implemented:</strong></span> behaviour exists in the code and is covered by the current tests. It may still operate on local/mock data.
+- <span style="color:#b45309"><strong>Amber — partial:</strong></span> a bounded local implementation exists, but a production integration, trust boundary or operational capability is missing.
+- **Grey dashed — not implemented:** production architecture proposed for the SRE Agent; shown to make the intended operating model explicit, not as a claim about this repository.
+
+**The critical distinction:** the take-home currently runs path A. With no grant, it stops at `AWAITING_HUMAN_DECISION`; with an exact matching grant, it runs the mock rollback; with a mismatch, it rejects the grant. Path B is the intended production model: a deterministic, pre-approved policy can authorize a tightly bounded routine action without an incident-time human approval. Only actions requiring additional judgment should request a responder decision. A model-generated recommendation or confidence score must never create authorization.
+
+**Implementation limits behind the colors:** the five context tools are deterministic local mocks rather than live PagerDuty/MCP/observability integrations; assessment is deterministic rather than an LLM call; the grant is supplied by the caller and its origin is not authenticated; the rollback and recovery metrics are simulations; and local SQLite/event history is not a distributed audit or execution system. The repository emits an idempotency key but does not enforce distributed deduplication.
 
 **What the tests cover:**
 
@@ -109,7 +143,7 @@ flowchart TD
 | Recovery verification | Fresh synthetic metrics determine whether recovery is verified |
 | Failed recovery | Keeps the incident open and requires a new human decision; it does not repeat the write |
 
-**Still outside this prototype:** real approval UI or policy service, real deployment execution, real post-action observability queries, read-tool failure/degraded-assessment tests, distributed idempotency and production load tests.
+**Still outside this prototype:** standing pre-authorized policy evaluation (the path that enables unattended 03:00 remediation), real approval UI/service and grant authentication, real deployment execution, real post-action observability queries, robust degraded-assessment behaviour, distributed idempotency and production load tests.
 
 **What each read tool provides:**
 - **Service profile:** who owns the service, what it depends on and where its runbook is.
@@ -122,7 +156,7 @@ The tools run sequentially in the order shown. Each successful read contributes 
 
 **How to read the boundary:**
 - **Implemented:** incident investigation, approval-grant validation, simulated rollback, post-action metric verification and failed-recovery handoff.
-- **Not implemented:** real approval UI/policy service, real deployment action or real observability integration.
+- **Not implemented:** standing pre-authorized policy engine, approval UI/service and identity-backed grant issuance, real deployment action or real observability integration.
 - **Safety behaviour:** an absent or mismatched grant cannot execute; unsuccessful recovery does not trigger an automatic repeat.
 
 The agent must not infer authorization from its own assessment. Policy enforcement belongs in deterministic controls and the destination system, not in model-generated text.
