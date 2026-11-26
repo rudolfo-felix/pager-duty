@@ -1,4 +1,4 @@
-# PagerDuty SRE Agent — Session 1
+# PagerDuty SRE Agent — Rudolfo Félix candidate
 
 A runnable **incident-response agent prototype** built with LangGraph, Pydantic and SQLite. It investigates a synthetic SEV-1 checkout incident, gathers evidence, produces a structured assessment and recommends a mitigation. With a matching trusted approval grant, it can also run a simulated rollback and verify synthetic post-action metrics.
 
